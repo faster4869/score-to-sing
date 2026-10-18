@@ -244,6 +244,15 @@ body.role-member #myPanel{display:none}
 .mini .btn.on{background:var(--hot,#d93a2b);color:#1a1a1a;border-color:transparent}
 .card .order .btn{padding:0 6px;font-size:10px;line-height:16px}
 .mixer{flex-basis:100%}
+.lyr-rev{display:flex;flex-direction:column;gap:10px;border-top:1px dashed var(--line);padding-top:10px}
+.lyr-rev textarea{width:100%;min-height:70px;margin-top:6px}
+.lr-list{display:flex;flex-direction:column;gap:12px}
+.lr-row{display:flex;flex-direction:column;gap:6px;background:var(--sunk);border-radius:10px;padding:10px}
+.lr-head{display:flex;justify-content:space-between;gap:10px;font-size:14px}
+.lr-count{font:600 13px var(--mono);color:var(--muted)} .lr-count.ok{color:#2E9E5B} .lr-count.bad{color:#C98A00}
+.lr-img{overflow-x:auto;background:#fff;border-radius:6px} .lr-img canvas{display:block;max-width:none;height:auto}
+.lr-in{width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px var(--jp)}
+#scanBox:not(.mode-lyrics) .lyr-only,#scanBox.mode-lyrics .notes-only{display:none}
 .xml-more summary{cursor:pointer;color:var(--muted);font-size:13px;margin:4px 0}
 .mixer summary{cursor:pointer;color:var(--muted);font-size:14px}
 .mix-rows{display:flex;flex-direction:column;gap:6px;margin-top:8px}
@@ -362,6 +371,8 @@ body.role-member #myPanel{display:none}
         <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl,.mscz,.mscx,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml" hidden>
         <label class="btn" for="pdfFile">掃描 PDF／圖片…</label>
         <input id="pdfFile" type="file" accept=".pdf,application/pdf,image/*" hidden>
+        <label class="btn" for="lyrPdfFile" title="音符用別的軟體轉好、但沒有歌詞時，從原本的 PDF 讀出歌詞補上">從 PDF 補上歌詞…</label>
+        <input id="lyrPdfFile" type="file" accept=".pdf,application/pdf" hidden>
         <span class="note" id="impStatus" aria-live="polite"></span>
       </div>
       <div id="xmlBox" class="imp-box" hidden>
@@ -384,20 +395,35 @@ body.role-member #myPanel{display:none}
           <span class="note" id="scInfo"></span>
           <button class="btn" id="scNextUnsure" type="button" hidden>下一個要確認的</button>
         </div>
+        <div class="row lyr-only"><label class="field">要補歌詞的曲子 <select id="lyrTarget" class="psong" style="max-width:24em"></select></label><span class="note">點一下這首聲部所在的那條五線譜，再選要用哪一行歌詞（兩部共用歌詞時，可以選上面那條譜底下的歌詞）</span></div>
         <div class="scan-view"><div class="scan-page"><img id="scanImg" alt="樂譜頁面"><svg id="scanSvg" preserveAspectRatio="none"></svg></div></div>
         <div class="row">
-          <label class="field">譜號 <select id="scClef"><option value="treble">高音</option><option value="treble8">高音 8（男聲）</option><option value="bass">低音</option></select></label>
-          <label class="field">調號 <select id="scKey"></select></label>
+          <label class="field notes-only">譜號 <select id="scClef"><option value="treble">高音</option><option value="treble8">高音 8（男聲）</option><option value="bass">低音</option></select></label>
+          <label class="field notes-only">調號 <select id="scKey"></select></label>
           <label class="field" title="有弱起拍就填 0">第一行第一小節是第 <input id="scStart" type="number" min="0" max="999"> 小節</label>
           <label class="field" id="scLyrWrap" hidden>歌詞 <select id="scLyr"></select></label>
-          <label class="field">分部時取 <select id="scChord"><option value="top">上方的音</option><option value="bottom">下方的音</option></select></label>
+          <label class="field" id="lyrLangWrap" hidden>歌詞語言 <select id="lyrLang"><option value="en">英文</option><option value="fr">法文</option><option value="it">義大利文</option><option value="la">拉丁文</option><option value="de">德文</option><option value="zh">中文</option><option value="ja">日文</option></select></label>
+          <label class="field notes-only">分部時取 <select id="scChord"><option value="top">上方的音</option><option value="bottom">下方的音</option></select></label>
         </div>
         <div class="row">
-          <label class="field" for="scName">曲名</label><input id="scName" class="name-in" type="text" autocomplete="off">
+          <label class="field notes-only" for="scName">曲名</label><input id="scName" class="name-in notes-only" type="text" autocomplete="off">
           <button class="btn primary" id="scGo" type="button" disabled>辨識並儲存匯入的曲子</button>
           <button class="btn" id="scCancel" type="button">關閉</button>
         </div>
-        <p class="note">譜號是依照你點的那條譜自動判斷的，不對的話請改。請先確認調號，升降會照它判斷。會辨識音高、音符和休止符的長短、附點，以及相鄰兩個同音之間的連結線；臨時升降記號、歌詞和跨好幾個音的圓滑線需要你補上。</p>
+        <div class="lyr-rev" id="lyrRev" hidden>
+          <div class="row">
+            <button class="btn" id="lyrOcr" type="button">自動辨識文字（草稿）</button>
+            <span class="note" id="lyrRevMsg" aria-live="polite"></span>
+          </div>
+          <details><summary>或一次貼上整首歌詞，自動分配到每一行</summary>
+            <textarea id="lyrPaste" spellcheck="false" placeholder="例如：clap your hands. Cel-e-brate, cel-e-brate, come to the mu-sic…（中文一個字對一個音，不用空格）"></textarea>
+            <div class="row"><button class="btn" id="lyrSpread" type="button">分配到各行</button></div>
+          </details>
+          <div id="lyrRevList" class="lr-list"></div>
+          <div class="row"><button class="btn primary" id="lyrApply" type="button">套用歌詞</button><span class="note">綠色＝字數剛好；黃色＝字數不合（還是可以套用，多出來或缺的會略過）；紅框＝這個位置沒有字。</span></div>
+        </div>
+        <p class="note lyr-only">歌詞會照 PDF 上的位置，對到這首曲子同一小節的音符上。小節號要對得起來；有弱起拍的話，把「第一行第一小節」填 0。只有電子版 PDF（文字選得起來的）讀得到歌詞。</p>
+        <p class="note notes-only">譜號是依照你點的那條譜自動判斷的，不對的話請改。請先確認調號，升降會照它判斷。會辨識音高、音符和休止符的長短、附點，以及相鄰兩個同音之間的連結線；臨時升降記號、歌詞和跨好幾個音的圓滑線需要你補上。</p>
       </div>
     </section>
 
@@ -2528,17 +2554,20 @@ function detectClef(b,w,st){
   return 'treble';
 }
 /* ---- load a file ---- */
-$('pdfFile').onchange=async e=>{
-  const f=e.target.files[0]; e.target.value=''; if(!f) return;
+$('pdfFile').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openScan(f,'notes'); };
+$('lyrSpread').onclick=spreadPasted; $('lyrApply').onclick=applyLyricReview; $('lyrOcr').onclick=ocrDraft;
+$('lyrLang').onchange=()=>{ if(SCAN&&SCAN.imageLyrics){ SCAN.lyrKey=''; renderScan(); } };
+$('lyrPdfFile').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openScan(f,'lyrics'); };
+async function openScan(f,mode){
   $('xmlBox').hidden=true; XML=null; closeScan();
   try{
     if(/pdf$/i.test(f.type)||/\.pdf$/i.test(f.name)){
       impStatus('載入 PDF 讀取元件…'); const lib=await loadPdfJs();
       const doc=await lib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;
-      SCAN={kind:'pdf',src:doc,n:doc.numPages,name:f.name,pages:[],choice:{},pick:null,page:0};
+      SCAN={kind:'pdf',src:doc,n:doc.numPages,name:f.name,pages:[],choice:{},pick:null,page:0,mode};
     } else {
       const url=URL.createObjectURL(f); const im=new Image(); im.src=url; await im.decode();
-      SCAN={kind:'img',src:im,n:1,name:f.name,pages:[],choice:{},pick:null,page:0,url};
+      SCAN={kind:'img',src:im,n:1,name:f.name,pages:[],choice:{},pick:null,page:0,url,mode};
     }
     SCAN.skewTmp={};
     for(let pi=0;pi<SCAN.n;pi++){
@@ -2560,10 +2589,17 @@ $('pdfFile').onchange=async e=>{
     }
     const total=SCAN.pages.reduce((a,p)=>a+p.systems.length,0);
     if(!total){ impStatus('找不到五線譜。請用樂譜軟體輸出的 PDF；如果是拍照或掃描，請盡量拍正、拍清楚。'); closeScan(); return; }
-    impStatus(`找到 ${total} 行譜。請點一下你的聲部那條五線譜。`);
+    const lyr=mode==='lyrics';
+    const tch=SCAN.pages.reduce((a,p)=>a+(p.text||[]).reduce((k,t)=>k+t.s.trim().length,0),0);
+    SCAN.imageLyrics=lyr&&tch<8*total;
+    impStatus(`找到 ${total} 行譜。`+(SCAN.imageLyrics?'這份是掃描檔，會先從圖片找出每個字的位置，再請你確認文字。':'')+`請點一下${lyr?'要補歌詞的聲部':'你的聲部'}那條五線譜。`);
+    $('lyrRev').hidden=true; LYR=null;
+    $('scanBox').classList.toggle('mode-lyrics',lyr); $('scGo').textContent=lyr?(SCAN.imageLyrics?'找出歌詞位置':'補上歌詞'):'辨識並儲存匯入的曲子';
+    $('lyrLangWrap').hidden=!SCAN.imageLyrics; if(SCAN.imageLyrics){ const tg=songById($('lyrTarget').value)||song(); const tl=(tg.ttsLang||'en').split('-')[0]; $('lyrLang').value=OCR_LANG[tl]?tl:'en'; }
+    if(lyr){ const ts=$('lyrTarget'); ts.innerHTML=lib.songs.map(x=>`<option value="${x.id}">${esc(x.title||'未命名')}</option>`).join(''); ts.value=song().id; ts.onchange=()=>{ const t=songById(ts.value); if(t) $('scStart').value=Math.max(0,+t.startBar||1); }; }
     $('scanBox').hidden=false; syncScKey(); $('scName').value=(SCAN.name||'').replace(/\.[^.]+$/,''); $('scStart').value=Math.max(0,+song().startBar||1); renderScan();
   }catch(err){ impStatus(err.message||'無法讀取這個檔案'); closeScan(); }
-};
+}
 function closeScan(){ if(SCAN&&SCAN.url) URL.revokeObjectURL(SCAN.url); if(SCAN&&SCAN.kind==='pdf') try{ SCAN.src.destroy(); }catch(e){} SCAN=null; const b=$('scanBox'); if(b) b.hidden=true; }
 $('scCancel').onclick=()=>{ closeScan(); impStatus(''); };
 
@@ -2586,13 +2622,40 @@ function lyricLinesFor(pg,sy,idx){
   lines.forEach(L=>{ L.items.sort((a,b)=>a.x0-b.x0); L.syl=[]; L.items.forEach(w=>{ if(w.hy){ const pv=L.syl[L.syl.length-1]; if(pv) pv.hy=true; } else L.syl.push({s:w.s,x0:w.x0,x1:w.x1,y:w.y,fs:w.fs,hy:!!w.tailHy}); }); });
   return lines.filter(L=>L.syl.length).sort((a,b)=>a.y-b.y);
 }
+async function syncImageLyricChoice(){
+  const sel=$('scLyr'), wrap=$('scLyrWrap'); if(!(SCAN&&SCAN.pick&&firstChosen())) return;
+  const key=SCAN.lyrKey; wrap.hidden=false; sel.innerHTML='<option value="none">找歌詞位置中…</option>';
+  // intros and piano-only lines have no words: try the first few chosen lines until one has lyrics
+  const cand=[]; for(let pi=0;pi<SCAN.pages.length&&cand.length<5;pi++) for(let si=0;si<SCAN.pages[pi].systems.length&&cand.length<5;si++){ const ch=SCAN.choice[sysKey(pi,si)]; if(ch) cand.push({pi,si,me:ch.idx}); }
+  let opts=[];
+  for(const f of cand){ opts=await imageLyricOpts(f); if(SCAN.lyrKey!==key) return; if(opts.length) break; }
+  sel.innerHTML=''; opts.forEach(x=>{ const o=document.createElement('option'); o.value=x.v; o.textContent=x.t; sel.append(o); });
+  const o=document.createElement('option'); o.value='none'; o.textContent='不補歌詞'; sel.append(o);
+  // the own line with the most marks first, otherwise the busiest shared one
+  const own=opts.filter(x=>x.v.startsWith('0:')).sort((a,b)=>b.n-a.n)[0]; sel.value=(own||opts.slice().sort((a,b)=>b.n-a.n)[0]||{v:'none'}).v;
+}
+async function imageLyricOpts(f){
+  const pg=SCAN.pages[f.pi], sy=pg.systems[f.si], me=f.me;
+  const c=await renderPage(f.pi,pg.scale); const b=toBinary(c.getContext('2d',{willReadFrequently:true}),c.width,c.height);
+  const order=[me,...Array.from({length:me},(_,k)=>me-1-k),...Array.from({length:sy.staves.length-me-1},(_,k)=>me+1+k)]; const opts=[];
+  order.forEach(j=>{ const A=analyzeStaff(b,c.width,c.height,sy.staves[j],song().key); imageLyricLines(b,c.width,c.height,sy,j,A.heads,LYR_CJK()).forEach((L,i)=>{ const n=L.boxes.filter(B=>B.x1>A.startX).length; if(n<3) return; const d=j-me;
+    const where=d===0?'這條譜底下':d<0?`上面第 ${-d} 條譜底下（共用歌詞）`:`下面第 ${d} 條譜底下`; opts.push({v:d+':'+i,t:`${where}第 ${i+1} 行（找到 ${n} 個字的位置）`,n}); }); });
+  c.width=c.height=0; return opts;
+}
+function lyricLineFor(pg,sy,idx,choice){ if(!choice||choice==='none') return null; const [d,i]=choice.split(':').map(Number); const j=idx+d; if(j<0||j>=sy.staves.length) return null; const Ls=lyricLinesFor(pg,sy,j); return Ls.length?Ls[Math.min(i,Ls.length-1)]:null; }
 function syncLyricChoice(){
   const sel=$('scLyr'), wrap=$('scLyrWrap'); sel.innerHTML='';
+  if(SCAN&&SCAN.imageLyrics){ syncImageLyricChoice(); return; }
   const f=SCAN&&SCAN.pick?firstChosen():null;
-  const lines=f?lyricLinesFor(SCAN.pages[f.pi],SCAN.pages[f.pi].systems[f.si],SCAN.choice[sysKey(f.pi,f.si)].idx):[];
-  lines.forEach((L,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=`第 ${i+1} 行：${L.syl.slice(0,6).map(x=>x.s).join(' ')}…`; sel.append(o); });
-  const o=document.createElement('option'); o.value='-1'; o.textContent='不匯入歌詞'; sel.append(o);
-  wrap.hidden=!lines.length; if(lines.length) sel.value='0'; else sel.value='-1';
+  const opts=[];
+  if(f){ const pg=SCAN.pages[f.pi], sy=pg.systems[f.si], me=SCAN.choice[sysKey(f.pi,f.si)].idx;
+    // own lines first, then the staves above (shared lyrics usually sit under the upper part), then below
+    const order=[me,...Array.from({length:me},(_,k)=>me-1-k),...Array.from({length:sy.staves.length-me-1},(_,k)=>me+1+k)];
+    order.forEach(j=>lyricLinesFor(pg,sy,j).forEach((L,i)=>{ const d=j-me; const where=d===0?'這條譜底下':d<0?`上面第 ${-d} 條譜底下（共用歌詞）`:`下面第 ${d} 條譜底下`;
+      opts.push({v:d+':'+i,t:`${where}第 ${i+1} 行：${L.syl.slice(0,6).map(x=>x.s).join(' ')}…`}); })); }
+  opts.forEach(x=>{ const o=document.createElement('option'); o.value=x.v; o.textContent=x.t; sel.append(o); });
+  const o=document.createElement('option'); o.value='none'; o.textContent='不匯入歌詞'; sel.append(o);
+  wrap.hidden=!opts.length; sel.value=opts.length?opts[0].v:'none';
 }
 /* draw-based hyphens: a short dash between two syllables on the same line */
 function hyphenBetween(b,w,h,a,c,s){
@@ -2631,7 +2694,8 @@ function renderScan(){
   $('scInfo').textContent=!SCAN.pick?`共 ${all} 行。先點一下你的聲部那條五線譜。`:unsure?`共 ${all} 行，有 ${unsure} 行聲部數不同，請確認黃色框的選擇是否正確（點一下就算確認）。`:`共 ${all} 行，都已選好。`;
   $('scNextUnsure').hidden=!SCAN.pick||!unsure; $('scGo').disabled=!SCAN.pick;
   // clef of the first chosen staff
-  if(SCAN.pick&&!SCAN.clefSet){ const f=firstChosen(); if(f){ $('scClef').value=f.st.clef; SCAN.clefSet=true; syncLyricChoice(); } }
+  if(SCAN.pick&&!SCAN.clefSet){ const f=firstChosen(); if(f){ $('scClef').value=f.st.clef; SCAN.clefSet=true; } }
+  if(SCAN.pick){ const f=firstChosen(); const k=f?f.pi+':'+f.si+':'+SCAN.choice[sysKey(f.pi,f.si)].idx:''; if(k!==SCAN.lyrKey){ SCAN.lyrKey=k; syncLyricChoice(); } }
 }
 function firstChosen(){ for(let pi=0;pi<SCAN.pages.length;pi++) for(let si=0;si<SCAN.pages[pi].systems.length;si++){ const c=SCAN.choice[sysKey(pi,si)]; if(c) return {pi,si,st:SCAN.pages[pi].systems[si].staves[c.idx]}; } return null; }
 $('scanSvg').addEventListener('click',e=>{
@@ -2893,11 +2957,201 @@ function posToCode(p,clef){
 }
 const DEN_LETTER={1:'w',2:'h',4:'q',8:'e',16:'s',32:'s'};
 
+/* ---- lyrics in a scanned image: find the syllable boxes under a staff (positions only, no reading) ---- */
+function imageLyricLines(b,w,h,sy,idx,heads,cjk){
+  const st=sy.staves[idx], next=sy.staves[idx+1], s=st.s;
+  const yA=Math.round(st.bottom+0.9*s), yB=Math.round(next?next.top-0.6*s:Math.min(h-1,st.bottom+10*s));
+  const xA=Math.round(st.x0+1.0*s), xB=Math.round(Math.min(w-1,st.x1+0.5*s));
+  if(yB-yA<s) return [];
+  // mask ink that belongs to notes hanging below the staff (heads, their ledger lines and stems)
+  const mask=new Uint8Array(w*(yB-yA+1));
+  (heads||[]).forEach(hd=>{ if(hd.cy<st.bottom) return; const x0=Math.max(xA,Math.round(hd.cx-1.1*s)), x1=Math.min(xB,Math.round(hd.cx+1.1*s)), y1=Math.min(yB,Math.round(hd.cy+0.8*s));
+    for(let y=yA;y<=y1;y++) for(let x=x0;x<=x1;x++) mask[(y-yA)*w+x]=1; });
+  const seen=new Uint8Array(w*(yB-yA+1)); const comps=[];
+  for(let y=yA;y<=yB;y++) for(let x=xA;x<=xB;x++){ const k=(y-yA)*w+x; if(seen[k]||!b[y*w+x]||mask[k]) continue;
+    const q=[[x,y]]; seen[k]=1; let x0=x,x1=x,y0=y,y1=y,n=0;
+    while(q.length&&n<20000){ const [cx,cy]=q.pop(); n++; if(cx<x0)x0=cx; if(cx>x1)x1=cx; if(cy<y0)y0=cy; if(cy>y1)y1=cy;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const nx=cx+dx, ny=cy+dy; if(nx<xA||nx>xB||ny<yA||ny>yB) continue; const kk=(ny-yA)*w+nx; if(!seen[kk]&&b[ny*w+nx]&&!mask[kk]){ seen[kk]=1; q.push([nx,ny]); } } }
+    comps.push({x0,x1,y0,y1,n,w:x1-x0+1,h:y1-y0+1,cy:(y0+y1)/2}); }
+  // keep text-sized marks, plus thin dashes/underlines that separate syllables
+  const text=comps.filter(c=>c.h>=0.28*s&&c.h<=2.4*s&&c.w<=4*s&&c.n>=4&&!(c.y0<=yA+1&&c.h>1.6*s));
+  const thin=comps.filter(c=>c.h<0.28*s&&c.w>=0.25*s&&c.n>=3);
+  if(!text.length) return [];
+  // group into text lines by vertical position
+  text.sort((a,b)=>a.cy-b.cy); const lines=[];
+  text.forEach(c=>{ const L=lines.find(l=>Math.abs(l.cy-c.cy)<0.75*Math.max(l.hgt,c.h)); if(L){ L.items.push(c); L.cy=(L.cy*L.items.length+c.cy)/(L.items.length+1); L.hgt=Math.max(L.hgt,Math.min(c.h,2*s)); } else lines.push({cy:c.cy,hgt:Math.min(c.h,2*s),items:[c]}); });
+  const out=[];
+  lines.forEach(L=>{ if(L.items.length<3) return;
+    // real lyrics are words: most letters sit right next to another letter. Notes, beams and accents below a piano staff are scattered marks.
+    { const it=L.items.slice().sort((p,q)=>p.x0-q.x0), mh=it.map(c=>c.h).sort((p,q)=>p-q)[it.length>>1]; let near=0;
+      it.forEach((c,i)=>{ const pv=it[i-1], nx=it[i+1]; if((pv&&c.x0-pv.x1<0.6*mh)||(nx&&nx.x0-c.x1<0.6*mh)) near++; });
+      if(it.length<4||near<0.55*it.length) return; }
+    const hs=L.items.map(c=>c.h).sort((a,b)=>a-b); const xh=hs[Math.floor(hs.length*0.5)]; // typical letter height
+    const y0=Math.min(...L.items.map(c=>c.y0)), y1=Math.max(...L.items.map(c=>c.y1));
+    const items=L.items.sort((a,b)=>a.x0-b.x0);
+    const seps=thin.filter(t=>t.cy>y0+0.35*(y1-y0)&&t.cy<y1+0.4*xh).map(t=>({x0:t.x0,x1:t.x1,long:t.w>2.2*xh}));
+    // merge letters into syllables: split at wide gaps or at a dash/underline
+    // word spacing differs a lot between editions: find it from the gaps actually seen on this line
+    const gs=[]; for(let i=1;i<items.length;i++){ const g=items[i].x0-Math.max(...items.slice(0,i).map(c=>c.x1)); if(g>0) gs.push(g); } gs.sort((a,b)=>a-b);
+    const small=gs.length?gs[Math.floor(gs.length*0.4)]:0;
+    const gap=cjk?0.35*xh:Math.max(0.2*xh,Math.min(0.55*xh,small*2.6+1)); const boxes=[];
+    items.forEach(c=>{ const last=boxes[boxes.length-1];
+      const sepBetween=last&&seps.some(t=>t.x0>=last.x1-1&&t.x1<=c.x0+1);
+      if(last&&!sepBetween&&c.x0-last.x1<=gap) { last.x1=Math.max(last.x1,c.x1); last.y0=Math.min(last.y0,c.y0); last.y1=Math.max(last.y1,c.y1); last.parts.push(c); }
+      else boxes.push({x0:c.x0,x1:c.x1,y0:c.y0,y1:c.y1,parts:[c]}); });
+    // two words packed tightly under two different notes: split at the widest gaps
+    const onsets=[]; (heads||[]).slice().sort((a,b)=>a.cx-b.cx).forEach(hd=>{ if(!onsets.length||hd.cx-onsets[onsets.length-1]>0.6*s) onsets.push(hd.cx); });
+    for(let i=0;i<boxes.length;i++){ const B=boxes[i]; if(B.parts.length<2) continue; const on=onsets.filter(x=>x>B.x0+0.5*xh&&x<B.x1-0.3*xh).length; const inner=(B.x1-B.x0)>2.2*xh?on:on-1; if(inner<1) continue; // a short word over one note is normal; a long run over notes is several syllables packed together
+      const ps=B.parts.slice().sort((a,b)=>a.x0-b.x0); const gg=[]; let mx=ps[0].x1; for(let j=1;j<ps.length;j++){ gg.push({j,g:ps[j].x0-mx}); mx=Math.max(mx,ps[j].x1); }
+      const cand=gg.filter(o=>o.g>Math.max(1.5,small*1.6)).sort((a,b)=>b.g-a.g).slice(0,inner).map(o=>o.j).sort((a,b)=>a-b); if(!cand.length) continue;
+      const pieces=[]; let st0=0; [...cand,ps.length].forEach(j=>{ const seg=ps.slice(st0,j); st0=j; pieces.push({x0:Math.min(...seg.map(c=>c.x0)),x1:Math.max(...seg.map(c=>c.x1)),y0:Math.min(...seg.map(c=>c.y0)),y1:Math.max(...seg.map(c=>c.y1)),parts:seg}); });
+      boxes.splice(i,1,...pieces); i+=pieces.length-1; }
+    // a CJK run that merged into one wide box is several characters side by side
+    if(cjk){ const ch=Math.max(xh,0.8*(y1-y0)); for(let i=0;i<boxes.length;i++){ const B=boxes[i], wd=B.x1-B.x0; const k=Math.round(wd/ch); if(k>=2&&wd>1.5*ch){ const step=wd/k; const parts=[]; for(let j=0;j<k;j++) parts.push({x0:B.x0+j*step,x1:B.x0+(j+1)*step,y0:B.y0,y1:B.y1}); boxes.splice(i,1,...parts); i+=k-1; } } }
+    // a blurry dash can pass as a letter: short, flat boxes are hyphens
+    for(let i=boxes.length-1;i>=0;i--){ const B=boxes[i], bh=B.y1-B.y0, bw=B.x1-B.x0; if(bh<0.5*xh&&bw<2*xh&&bw>bh*1.3&&(B.y0+B.y1)/2<y1-0.15*xh&&(B.y0+B.y1)/2>y0+0.15*xh){ seps.push({x0:B.x0,x1:B.x1,long:false}); boxes.splice(i,1); } }
+    // drop specks such as dots/commas that ended up alone
+    const big=boxes.filter(B=>(B.x1-B.x0)>=0.35*xh||(B.y1-B.y0)>=0.9*xh);
+    big.forEach((B,i)=>{ const nx=big[i+1]; B.hy=!!(nx&&seps.some(t=>!t.long&&t.x0>=B.x1-1&&t.x1<=nx.x0+1)); B.ext=seps.some(t=>t.long&&t.x0>=B.x1-2&&t.x0<=B.x1+1.5*xh); });
+    if(big.length>=2) out.push({y0,y1,xh,boxes:big});
+  });
+  return out.sort((a,b)=>a.y0-b.y0);
+}
+
+/* ---- put the PDF's lyrics onto a song whose notes came from elsewhere ---- */
+let LYR=null; // {sg,before,systems:[...] } while the image-lyrics check is open
+async function collectLyricSystems(sg,lyCh,image){
+  const systems=[]; let bar=Math.round(+$('scStart').value||0);
+  for(let pi=0;pi<SCAN.pages.length;pi++){ const pg=SCAN.pages[pi]; if(!pg.systems.length) continue;
+    impStatus(`讀取歌詞：第 ${pi+1}／${SCAN.n} 頁…`);
+    const c=await renderPage(pi,pg.scale); const ctx=c.getContext('2d',{willReadFrequently:true}); const b=toBinary(ctx,c.width,c.height);
+    for(let si=0;si<pg.systems.length;si++){ const sy=pg.systems[si], ch=SCAN.choice[sysKey(pi,si)]; if(!ch) continue;
+      const st=sy.staves[ch.idx], S=st.s; const A=analyzeStaff(b,c.width,c.height,st,sg.key);
+      const cuts=A.barX.filter(x=>x>A.startX-0.5*S); const heads=A.heads.slice().sort((a,b)=>a.cx-b.cx);
+      const segs=[]; let lastX=A.startX-S; [...cuts,1e9].forEach(cx=>{ const hs=heads.filter(h=>h.cx>lastX&&h.cx<cx); const rs=A.rests.filter(r=>r.cx>lastX&&r.cx<cx); if(cx<1e9||hs.length||rs.length) segs.push({x0:lastX,x1:Math.min(cx,st.x1),hs,n:hs.length+rs.length}); lastX=cx; });
+      const measures=segs.filter((m,k)=>m.n||k<segs.length-1);
+      const rec={bar,measures,S,syl:[]};
+      if(!image){ const L=lyricLineFor(pg,sy,ch.idx,lyCh); rec.syl=L?L.syl:[]; for(let i=0;i+1<rec.syl.length;i++) if(!rec.syl[i].hy&&hyphenBetween(b,c.width,c.height,rec.syl[i],rec.syl[i+1],S)) rec.syl[i].hy=true; }
+      else { const [d,li]=(lyCh||'0:0').split(':').map(Number); let L=null;
+        for(const dd of [...new Set([d,0,-1,1])]){ const j=ch.idx+dd; if(j<0||j>=sy.staves.length) continue;
+          const srcHeads=j===ch.idx?A.heads:analyzeStaff(b,c.width,c.height,sy.staves[j],sg.key).heads;
+          const Ls=imageLyricLines(b,c.width,c.height,sy,j,srcHeads,LYR_CJK()).filter(x=>x.boxes.filter(B=>B.x1>A.startX).length>=3);
+          if(Ls.length){ L=Ls[dd===d?Math.min(li,Ls.length-1):0]; break; } }
+        rec.boxes=L?L.boxes.filter(B=>B.x1>A.startX):[];
+        if(L){ const pad=Math.round(0.6*L.xh), y0=Math.max(0,L.y0-pad), y1=Math.min(c.height,L.y1+pad), x0=Math.max(0,Math.round(st.x0)), x1=Math.min(c.width,Math.round(st.x1+S));
+          const cv=document.createElement('canvas'); cv.width=x1-x0; cv.height=y1-y0; cv.getContext('2d').drawImage(c,x0,y0,cv.width,cv.height,0,0,cv.width,cv.height); rec.crop={cv,x0,y0}; } }
+      systems.push(rec); bar+=measures.length; }
+    c.width=c.height=0; }
+  return systems;
+}
+function applyLyricSystems(sg,systems){
+  let words=0, bars=0; const loose=[]; let lastSung=false;
+  systems.forEach(rec=>{ const S=rec.S, syl=rec.syl; let prevHead=null;
+    rec.measures.forEach((m,i)=>{ const N=rec.bar+i;
+      reparse(); const notes=P.toks.filter(t=>t.bar===N&&t.kind==='note'&&t.slot!==undefined); if(!notes.length) return;
+      const inBar=syl.filter(y=>{ const cx=(y.x0+y.x1)/2; return cx>=m.x0-0.3*S&&cx<m.x1-0.3*S; });
+      const hs=[]; m.hs.forEach(h=>{ const g=hs[hs.length-1]; if(g&&Math.abs(g.cx-h.cx)<0.6*S) return; if(prevHead&&prevHead.tie&&prevHead.p===h.p){ prevHead=h; return; } prevHead=h; hs.push(h); });
+      let out;
+      if(hs.length===notes.length){ const at=new Array(notes.length).fill(null);
+        inBar.forEach(y=>{ const cx=(y.x0+y.x1)/2; let best=0,bd=1e9; hs.forEach((h,k)=>{ const d=Math.min(Math.abs(h.cx-cx),Math.abs(h.hx0-y.x0)); if(d<bd){bd=d;best=k;} }); if(!at[best]) at[best]=y; });
+        out=at.map(y=>{ if(y){ lastSung=true; return y.s.replace(/\s+/g,'')+(y.hy?'-':''); } return lastSung?'_':'*'; });
+      } else { if(!inBar.length) return; loose.push(N);
+        out=notes.map((t,k)=>{ const y=inBar[k]; if(y){ lastSung=true; return y.s.replace(/\s+/g,'')+(y.hy?'-':''); } return '_'; }); }
+      const n=out.filter(w=>w!=='_'&&w!=='*').length; if(!n&&!inBar.length) return;
+      setBarLyrics(N,out); words+=n; bars++; }); });
+  return {words,bars,loose};
+}
+function lyricDone(sg,before,r){
+  sg.text=$('src').value; saveLib(true); loadSong(); closeScan(); LYR=null; $('lyrRev').hidden=true;
+  impStatus(`已幫「${sg.title}」補上 ${r.words} 個字（${r.bars} 個小節）。`+(r.loose.length?`其中 ${r.loose.length} 個小節音符數跟 PDF 對不太起來，是照順序填的，請到練唱或打譜分頁看一下：第 ${r.loose.slice(0,12).join('、')}${r.loose.length>12?'…':''} 小節。`:''));
+  const undo=document.createElement('button'); undo.className='btn'; undo.type='button'; undo.textContent='復原';
+  undo.onclick=()=>{ sg.text=before; saveLib(true); loadSong(); impStatus(`已復原「${sg.title}」原本的歌詞`); };
+  const go=document.createElement('button'); go.className='btn primary'; go.type='button'; go.textContent='到練唱分頁聽聽看';
+  go.onclick=()=>{ if(!lib.plan.some(p=>p.songId===sg.id)){ const rg=songRange(sg); lib.plan.push({id:uid(),songId:sg.id,name:sg.title,from:rg?rg[0]:1,to:rg?rg[1]:1,...PR_DEF}); saveLib(true); } setTab('practice'); };
+  $('impStatus').append(' ',go,' ',undo);
+}
+async function fillLyricsFromScan(){
+  const sg=songById($('lyrTarget').value); if(!sg) return; const lyCh=$('scLyrWrap').hidden?'none':$('scLyr').value;
+  const image=!!SCAN.imageLyrics;
+  if(lyCh==='none'){ impStatus(image?'這條譜附近找不到歌詞，請換一條譜':'這條譜底下找不到歌詞文字，請換一條譜或確認是電子版 PDF'); return; }
+  stopAll(); lib.current=sg.id; saveLib(true); loadSong(); const before=sg.text;
+  $('scGo').disabled=true;
+  try{
+    const systems=await collectLyricSystems(sg,lyCh,image);
+    if(image){ LYR={sg,before,systems}; renderLyricReview(); impStatus('找到歌詞的位置了。請在下面每一行填上（或貼上）這一行的歌詞，數量對上就會變綠色，再按「套用歌詞」。'); return; }
+    lyricDone(sg,before,applyLyricSystems(sg,systems));
+  }catch(err){ sg.text=before; saveLib(true); loadSong(); impStatus('補歌詞失敗：'+(err.message||err)); console.error(err); }
+  finally{ const g=$('scGo'); if(g) g.disabled=false; }
+}
+/* ---- scanned lyrics: the person supplies the words, the picture supplies where they go ---- */
+const LYR_CJK=()=>/^(zh|ja|hak)/.test(($('lyrLang')&&$('lyrLang').value)||'');
+function splitSyllables(t){ const out=[]; String(t||'').replace(/[　]/g,' ').split(/\s+/).forEach(tok=>{ if(!tok) return;
+    if(/^[-–—]+$/.test(tok)){ if(out.length) out[out.length-1].hy=true; return; } if(/^[_＿]+$/.test(tok)) return;
+    if(/[぀-ヿ㐀-鿿가-힯]/.test(tok)){ // one character per note
+      const chars=[...tok]; chars.forEach(ch=>{ if(/[，。、！？,.!?;:；：「」『』（）()]/.test(ch)&&out.length) return; out.push({s:ch,hy:false}); }); return; }
+    tok.split(/(?<=[-–])/).forEach(p=>{ const hy=/[-–]$/.test(p); const w=p.replace(/[-–]+$/,''); if(w) out.push({s:w,hy}); else if(out.length) out[out.length-1].hy=true; }); });
+  return out; }
+function renderLyricReview(){
+  const box=$('lyrRev'); box.hidden=false; const list=$('lyrRevList'); list.innerHTML='';
+  LYR.systems.forEach((rec,k)=>{ const row=document.createElement('div'); row.className='lr-row';
+    const n=rec.boxes.length; row.innerHTML=`<div class="lr-head"><b>第 ${k+1} 行（第 ${rec.bar} 小節起）</b><span class="lr-count"></span></div><div class="lr-img"></div><input class="lr-in" type="text" spellcheck="false" placeholder="這一行的歌詞，例如：Cel-e-brate, cel-e-brate（找到 ${n} 個字的位置）">`;
+    if(rec.crop){ const cv=document.createElement('canvas'); cv.width=rec.crop.cv.width; cv.height=rec.crop.cv.height; const c=cv.getContext('2d'); c.drawImage(rec.crop.cv,0,0); rec.view=cv; row.querySelector('.lr-img').append(cv); }
+    const inp=row.querySelector('.lr-in'); inp.value=rec.text||''; inp.oninput=()=>{ rec.text=inp.value; drawLyricRow(rec,row); }; drawLyricRow(rec,row); list.append(row); });
+}
+function drawLyricRow(rec,row){
+  const syl=splitSyllables(rec.text); const n=rec.boxes.length, m=syl.length; const unk=syl.filter(y=>/^\?+$/.test(y.s)).length; const ok=m===n&&!unk;
+  const cnt=row.querySelector('.lr-count'); cnt.textContent=m?`${m}／${n} 個字${ok?' ✓':m<n?'（少了 '+(n-m)+' 個）':m>n?'（多了 '+(m-n)+' 個）':'（有 '+unk+' 個沒認出來，請把 ? 改成正確的字）'}`:`找到 ${n} 個字的位置`; cnt.className='lr-count '+(m?ok?'ok':'bad':'');
+  if(!rec.view||!rec.crop) return; const c=rec.view.getContext('2d'); c.drawImage(rec.crop.cv,0,0);
+  const fs=Math.max(11,Math.round(rec.S*0.9)); c.font=`600 ${fs}px system-ui,sans-serif`;
+  rec.boxes.forEach((B,i)=>{ const x=B.x0-rec.crop.x0, y=B.y0-rec.crop.y0, w=B.x1-B.x0, h=B.y1-B.y0; const has=i<m;
+    c.strokeStyle=has?(ok?'#2E9E5B':'#E0A100'):'#D93A2B'; c.lineWidth=2; c.strokeRect(x-1,y-1,w+2,h+2);
+    if(has){ c.fillStyle=ok?'#1F7A45':'#B07D00'; c.fillText(syl[i].s,x,Math.min(rec.view.height-2,y+h+fs+2)); } });
+}
+function spreadPasted(){ const all=splitSyllables($('lyrPaste').value); let k=0;
+  LYR.systems.forEach(rec=>{ const take=all.slice(k,k+rec.boxes.length); k+=rec.boxes.length; rec.text=take.map(y=>y.s+(y.hy?'-':'')).join(' '); });
+  renderLyricReview(); const left=all.length-k; $('lyrRevMsg').textContent=left>0?`歌詞多了 ${left} 個字放不進去，請檢查哪一行少找到字的位置`:left<0?`歌詞不夠，還有 ${-left} 個位置是空的`:'剛好分配完'; }
+function applyLyricReview(){ if(!LYR) return; const {sg,before,systems}=LYR;
+  systems.forEach(rec=>{ const syl=splitSyllables(rec.text); rec.syl=rec.boxes.slice(0,syl.length).map((B,i)=>({s:syl[i].s,hy:syl[i].hy||B.hy,x0:B.x0,x1:B.x1})); });
+  lib.current=sg.id; loadSong(); lyricDone(sg,before,applyLyricSystems(sg,systems)); }
+/* optional: let OCR type a first draft of each line */
+const TESS_URL='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let tessReady=null;
+function loadTess(){ if(window.Tesseract) return Promise.resolve(window.Tesseract); if(tessReady) return tessReady;
+  tessReady=new Promise((res,rej)=>{ const sc=document.createElement('script'); sc.src=TESS_URL; sc.onload=()=>res(window.Tesseract); sc.onerror=()=>{ tessReady=null; rej(new Error('無法載入文字辨識元件，請確認網路連線')); }; document.head.append(sc); }); return tessReady; }
+const OCR_LANG={'en':'eng','fr':'fra','it':'ita','la':'lat','de':'deu','ja':'jpn','zh':'chi_tra','hak':'chi_tra'};
+async function ocrDraft(){ if(!LYR) return; const b=$('lyrOcr'); b.disabled=true; const msg=$('lyrRevMsg');
+  try{ msg.textContent='載入文字辨識元件（第一次會比較久）…'; const T=await loadTess(); const code=OCR_LANG[$('lyrLang').value]||'eng';
+    const langs=[code];
+    const worker=await T.createWorker(langs,1,{workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',langPath:'https://cdn.jsdelivr.net/npm/@tesseract.js-data/'+code+'@1.0.0/4.0.0_best_int'});
+    await worker.setParameters({tessedit_pageseg_mode:'7',preserve_interword_spaces:'1'});
+    let k=0; for(const rec of LYR.systems){ k++; msg.textContent=`辨識中… ${k}／${LYR.systems.length}`; if(!rec.crop||rec.text) continue;
+      // only the words: leave out the clef, bar numbers and anything past the last syllable
+      const cr=rec.crop, bx=rec.boxes; let src=cr.cv;
+      if(bx.length){ const pad=Math.round(0.8*(bx[0].y1-bx[0].y0)+4), x0=Math.max(0,Math.round(bx[0].x0-cr.x0-pad)), x1=Math.min(cr.cv.width,Math.round(bx[bx.length-1].x1-cr.x0+pad));
+        src=document.createElement('canvas'); src.width=Math.max(1,x1-x0); src.height=cr.cv.height; src.getContext('2d').drawImage(cr.cv,x0,0,src.width,src.height,0,0,src.width,src.height); }
+      const ox=src===cr.cv?0:Math.max(0,Math.round(bx[0].x0-cr.x0-Math.round(0.8*(bx[0].y1-bx[0].y0)+4)));
+      const {data}=await worker.recognize(src,{},{text:true,blocks:true}); if((data.confidence||0)<45){ rec.text=''; continue; }
+      // put each recognised letter into the syllable box it sits in, so the draft lines up with the notes
+      const words=[]; (data.blocks||[]).forEach(bl=>(bl.paragraphs||[]).forEach(pa=>(pa.lines||[]).forEach(ln=>(ln.words||[]).forEach(wd=>words.push(wd)))));
+      if(words.length&&bx.length){ const txt=bx.map(()=>''), X=v=>v+ox+cr.x0;
+        words.forEach(wd=>{ const t=(wd.text||'').replace(/[_—–|~=]+/g,'').replace(/^-+|-+$/g,''); if(!t) return; const wx0=X(wd.bbox.x0), wx1=X(wd.bbox.x1);
+          const hit=[]; bx.forEach((B,i)=>{ const ov=Math.min(B.x1,wx1)-Math.max(B.x0,wx0); if(ov>0.35*Math.min(B.x1-B.x0,wx1-wx0)) hit.push(i); });
+          if(!hit.length){ let best=-1,bd=1e9; bx.forEach((B,i)=>{ const d=Math.max(B.x0-wx1,wx0-B.x1,0); if(d<bd){bd=d;best=i;} }); if(best>=0&&bd<(bx[best].y1-bx[best].y0)) hit.push(best); else return; }
+          if(hit.length===1){ txt[hit[0]]+=t; return; }
+          const parts=t.split('-').filter(Boolean); if(parts.length===hit.length){ hit.forEach((h,k)=>txt[h]+=parts[k]); return; }
+          // one word over several syllable boxes: hand each letter to the box under it
+          const L=t.replace(/-/g,''); [...L].forEach((ch,c)=>{ const x=wx0+(c+0.5)/L.length*(wx1-wx0); let best=hit[0],bd=1e9; hit.forEach(h=>{ const B=bx[h], d=x<B.x0?B.x0-x:x>B.x1?x-B.x1:0; if(d<bd){bd=d;best=h;} }); txt[best]+=ch; }); });
+        rec.text=bx.map((B,i)=>(txt[i]||'?')+(B.hy&&i<bx.length-1?'-':'')).join(' ').replace(/- /g,'-'); }
+      else rec.text=(data.text||'').replace(/\s+/g,' ').replace(/[|]/g,'').trim(); }
+    await worker.terminate(); renderLyricReview(); msg.textContent='已填上草稿。辨識常有錯字，請對照圖片修正，數量對上會變綠色。'; }
+  catch(err){ msg.textContent='自動辨識失敗：'+(err.message||err)+'。可以直接打字或貼上歌詞。'; }
+  finally{ b.disabled=false; } }
 const WHY={acc:'可能有臨時升降記號',unk:'有沒辨識到的記號',far:'音很高或很低',chord:'有和弦，只取了一個音',beats:'拍數跟其他小節不同'};
 $('scGo').onclick=async()=>{
   if(!SCAN||!SCAN.pick) return;
+  if(SCAN.mode==='lyrics') return fillLyricsFromScan();
   const clef=$('scClef').value, chordPick=$('scChord').value; let bar=Math.round(+$('scStart').value||0);
-  const lyIdx=$('scLyrWrap').hidden?-1:+$('scLyr').value;
+  const lyCh=$('scLyrWrap').hidden?'none':$('scLyr').value;
   const startBar=bar; const lines=[]; const strips=[]; let nNotes=0, nSyl=0; const allBars=[];
   $('scGo').disabled=true;
   { const k=+$('scKey').value; stopAll(); const ns=newSong({title:$('scName').value.trim()||(SCAN.name||'').replace(/\.[^.]+$/,'')||'新曲子',clef,key:k,startBar,text:''}); lib.songs.push(ns); lib.current=ns.id; saveLib(true); loadSong(); syncKeySel(); }
@@ -2922,7 +3176,7 @@ $('scGo').onclick=async()=>{
           m.groups=groups; });
         // lyrics: match the chosen text line's syllables to notes by position
         const sylFor=new Map();
-        if(lyIdx>=0){ const Ls=lyricLinesFor(pg,sy,ch.idx), L=Ls[Math.min(lyIdx,Ls.length-1)];
+        if(lyCh!=='none'){ const L=lyricLineFor(pg,sy,ch.idx,lyCh);
           if(L){ const syl=L.syl; for(let i=0;i+1<syl.length;i++) if(!syl[i].hy&&hyphenBetween(b,c.width,c.height,syl[i],syl[i+1],S)) syl[i].hy=true;
             const notes=[]; let pn=null; measures.forEach(m=>m.groups.forEach(g=>{ if(g.kind==='r'){ pn=null; return; } const cont=!!(pn&&pn.tie&&pn.p===g.hd.p); if(!cont) notes.push(g); pn=g.hd; }));
             let ptr=0; syl.forEach(y=>{ const cx=(y.x0+y.x1)/2; let best=-1,bd=1e9;
