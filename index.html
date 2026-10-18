@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>分段練唱器</title>
-<meta name="description" content="把合唱聲部抄成文字，按小節範圍練唱，歌詞逐字亮起。">
+<title>譜唱</title>
+<meta name="description" content="匯入合唱樂譜、挑出自己的聲部，按小節練唱，歌詞逐字亮起。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Music&family=Noto+Sans+TC:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap">
@@ -276,7 +276,7 @@ summary{cursor:pointer;font-weight:500}
 <body>
 <div class="wrap">
   <header class="top">
-    <h1>分段練唱器</h1>
+    <h1>譜唱</h1>
     <div class="songbar">
       <label class="field" for="songSel">曲子</label>
       <select id="songSel" aria-label="選擇曲子"></select>
@@ -287,7 +287,8 @@ summary{cursor:pointer;font-weight:500}
     </div>
     <button class="btn" id="themeBtn" type="button" title="切換外觀">外觀：自動</button>
     <nav class="tabs" role="tablist" aria-label="模式">
-      <button role="tab" id="tabBtn-edit" data-tab="edit" aria-selected="true" type="button">打譜</button>
+      <button role="tab" id="tabBtn-import" data-tab="import" aria-selected="true" type="button">匯入</button>
+      <button role="tab" id="tabBtn-edit" data-tab="edit" aria-selected="false" type="button">打譜</button>
       <button role="tab" id="tabBtn-practice" data-tab="practice" aria-selected="false" type="button">練唱</button>
     </nav>
   </header>
@@ -325,8 +326,8 @@ summary{cursor:pointer;font-weight:500}
     </div>
   </section>
 
-  <!-- ============ 打譜 ============ -->
-  <section id="tab-edit" role="tabpanel" aria-labelledby="tabBtn-edit" style="display:flex;flex-direction:column;gap:16px">
+  <!-- ============ 匯入 ============ -->
+  <section id="tab-import" role="tabpanel" aria-labelledby="tabBtn-import" style="display:flex;flex-direction:column;gap:16px">
     <section class="panel" id="importPanel" aria-label="從樂譜匯入">
       <div class="row" style="justify-content:space-between">
         <h2 class="qe-title">從樂譜匯入</h2>
@@ -358,16 +359,66 @@ summary{cursor:pointer;font-weight:500}
         <div class="scan-view"><div class="scan-page"><img id="scanImg" alt="樂譜頁面"><svg id="scanSvg" preserveAspectRatio="none"></svg></div></div>
         <div class="row">
           <label class="field">譜號 <select id="scClef"><option value="treble">高音</option><option value="treble8">高音 8（男聲）</option><option value="bass">低音</option></select></label>
+          <label class="field">調號 <select id="scKey"></select></label>
           <label class="field" title="有弱起拍就填 0">第一行第一小節是第 <input id="scStart" type="number" min="0" max="999"> 小節</label>
           <label class="field" id="scLyrWrap" hidden>歌詞 <select id="scLyr"></select></label>
+          <label class="field">寫進 <select id="scTarget"><option value="new">新的曲子</option><option value="cur">目前這首（取代同號小節）</option></select></label>
           <label class="field">分部時取 <select id="scChord"><option value="top">上方的音</option><option value="bottom">下方的音</option></select></label>
           <button class="btn primary" id="scGo" type="button" disabled>產生對照條與草稿輸入碼</button>
           <button class="btn" id="scCancel" type="button">關閉</button>
         </div>
-        <p class="note">譜號是依照你點的那條譜自動判斷的，不對的話請改。調號會用上方「快速打譜」選的調號來判斷升降，請先設定好。會辨識音高、音符和休止符的長短、附點，以及相鄰兩個同音之間的連結線；臨時升降記號、歌詞和跨好幾個音的圓滑線需要你補上。</p>
+        <p class="note">譜號是依照你點的那條譜自動判斷的，不對的話請改。請先確認調號，升降會照它判斷。會辨識音高、音符和休止符的長短、附點，以及相鄰兩個同音之間的連結線；臨時升降記號、歌詞和跨好幾個音的圓滑線需要你補上。</p>
       </div>
     </section>
 
+    <section class="rev panel" id="revBox" hidden aria-label="逐小節校對">
+        <div class="row rev-head">
+          <b id="revTitle">第 1 小節</b><span class="rev-why" id="revWhy"></span>
+          <span class="rev-prog" id="revProg"></span>
+        </div>
+        <div class="rev-view" id="revView"><canvas id="revCanvas"></canvas></div>
+        <div class="rev-now">目前的內容：<span id="revNow"></span></div>
+        <div class="row rev-tools" id="revTools">
+          <span class="seg" role="group" aria-label="點原譜時補上">
+            <button type="button" data-ins="note" aria-pressed="true">點譜補音符</button><button type="button" data-ins="rest" aria-pressed="false">點譜補休止符</button>
+          </span>
+          <span class="rev-sep"></span>
+          <button class="btn" type="button" data-r="ArrowLeft" title="←">◀ 選前一個</button>
+          <button class="btn" type="button" data-r="ArrowRight" title="→">選下一個 ▶</button>
+          <button class="btn" type="button" data-r="ArrowUp" title="↑">音高 ↑</button>
+          <button class="btn" type="button" data-r="ArrowDown" title="↓">音高 ↓</button>
+          <span class="seg" role="group" aria-label="時值">
+            <button type="button" data-r="1" title="鍵盤 1">全</button><button type="button" data-r="2" title="鍵盤 2">二分</button><button type="button" data-r="4" title="鍵盤 4">四分</button><button type="button" data-r="8" title="鍵盤 8">八分</button><button type="button" data-r="6" title="鍵盤 6">十六分</button>
+          </span>
+          <button class="btn" type="button" data-r="." title="鍵盤 .">附點</button>
+          <button class="btn" type="button" data-r="~" title="鍵盤 ~">連結線</button>
+          <button class="btn" type="button" data-r="0" title="鍵盤 0">改成休止符</button>
+          <button class="btn danger" type="button" data-r="Delete" title="Delete">刪除</button>
+        </div>
+        <div class="row">
+          <button class="btn" id="revPrev" type="button" title="Shift+Enter">◀ 上一個</button>
+          <button class="btn primary" id="revOk" type="button">✓ 正確，下一個（Enter）</button>
+          <button class="btn" id="revSkip" type="button">跳過 ▶</button>
+          <button class="btn" id="revUndo" type="button" hidden>取消確認</button>
+          <label class="field"><input type="checkbox" id="revOnlySus" checked>只跳到可疑的小節（取消勾選＝每個小節都看一次）</label>
+          <button class="btn" id="revExit" type="button">結束校對（Esc）</button>
+        </div>
+        <p class="note"><b>怎麼用：</b>對照上面的原譜，看「目前的內容」哪裡不一樣 → 用 ◀ ▶ 選到那個音 → 按按鈕修改。原譜上有、這裡卻沒有的音或休止符，先選好「點譜補音符／休止符」，再直接點原譜上它的位置。改好按「正確，下一個」。也可以點下方「樂譜對照」的任一小節直接跳過去。<br>鍵盤：← → 選音 · ↑ ↓ 音高（Shift 升降半音）· 1 2 4 8 6 時值（全、二分、四分、八分、十六分）· . 附點 · ~ 連結線 · # b n 臨時記號 · 0 改成休止符 · Delete 刪除。原譜上漏掉的音，直接點它的位置就會補上。</p>
+      </section>
+
+    <section class="panel" id="stripPanel" hidden aria-label="樂譜對照">
+      <div class="row" style="justify-content:space-between">
+        <h2 class="qe-title">樂譜對照</h2>
+        <div class="row"><span class="note" id="stripSum">點任一小節可以從那裡開始校對</span><button class="btn primary" id="revStart" type="button">逐小節校對</button><button class="btn" id="stripMarks" type="button" aria-pressed="true">顯示辨識標記</button><button class="btn" id="stripClear" type="button">移除對照條</button></div>
+      </div>
+      <div id="stripList" class="strip-list"></div>
+    </section>
+
+    <p class="note" id="impNext" style="padding:0 4px">匯入完成後，可以到「練唱」分頁開始練習；要手動修改音符、歌詞，到「打譜」分頁。</p>
+  </section>
+
+  <!-- ============ 打譜 ============ -->
+  <section id="tab-edit" role="tabpanel" aria-labelledby="tabBtn-edit" hidden style="display:none;flex-direction:column;gap:16px">
     <div class="panel">
       <div class="song-meta">
         <label class="field" for="songTitle">曲名</label>
@@ -388,14 +439,6 @@ summary{cursor:pointer;font-weight:500}
         <p class="note" style="margin-top:6px">標記會在譜上顯示成「@號碼」。不需要時，點選它再按刪除。</p>
       </details>
     </div>
-
-    <section class="panel" id="stripPanel" hidden aria-label="樂譜對照">
-      <div class="row" style="justify-content:space-between">
-        <h2 class="qe-title">樂譜對照</h2>
-        <div class="row"><span class="note" id="stripSum">在快速輸入碼打「15:」時，會自動跳到第 15 小節</span><button class="btn primary" id="revStart" type="button">逐小節校對</button><button class="btn" id="stripMarks" type="button" aria-pressed="true">顯示辨識標記</button><button class="btn" id="stripClear" type="button">移除對照條</button></div>
-      </div>
-      <div id="stripList" class="strip-list"></div>
-    </section>
 
     <section class="panel" id="codePanel" aria-label="快速輸入碼">
       <div class="row" style="justify-content:space-between">
@@ -456,40 +499,6 @@ summary{cursor:pointer;font-weight:500}
         <span class="sep"></span>
         <button class="btn primary" id="qplayHere" type="button" title="從輸入位置所在的小節播放到最後">▶ 從這裡播放</button>
         <button class="btn" id="qstop" type="button">停止</button>
-      </div>
-      <div class="rev" id="revBox" hidden aria-label="逐小節校對">
-        <div class="row rev-head">
-          <b id="revTitle">第 1 小節</b><span class="rev-why" id="revWhy"></span>
-          <span class="rev-prog" id="revProg"></span>
-        </div>
-        <div class="rev-view" id="revView"><canvas id="revCanvas"></canvas></div>
-        <div class="rev-now">目前的內容：<span id="revNow"></span></div>
-        <div class="row rev-tools" id="revTools">
-          <span class="seg" role="group" aria-label="點原譜時補上">
-            <button type="button" data-ins="note" aria-pressed="true">點譜補音符</button><button type="button" data-ins="rest" aria-pressed="false">點譜補休止符</button>
-          </span>
-          <span class="rev-sep"></span>
-          <button class="btn" type="button" data-r="ArrowLeft" title="←">◀ 選前一個</button>
-          <button class="btn" type="button" data-r="ArrowRight" title="→">選下一個 ▶</button>
-          <button class="btn" type="button" data-r="ArrowUp" title="↑">音高 ↑</button>
-          <button class="btn" type="button" data-r="ArrowDown" title="↓">音高 ↓</button>
-          <span class="seg" role="group" aria-label="時值">
-            <button type="button" data-r="1" title="鍵盤 1">全</button><button type="button" data-r="2" title="鍵盤 2">二分</button><button type="button" data-r="4" title="鍵盤 4">四分</button><button type="button" data-r="8" title="鍵盤 8">八分</button><button type="button" data-r="6" title="鍵盤 6">十六分</button>
-          </span>
-          <button class="btn" type="button" data-r="." title="鍵盤 .">附點</button>
-          <button class="btn" type="button" data-r="~" title="鍵盤 ~">連結線</button>
-          <button class="btn" type="button" data-r="0" title="鍵盤 0">改成休止符</button>
-          <button class="btn danger" type="button" data-r="Delete" title="Delete">刪除</button>
-        </div>
-        <div class="row">
-          <button class="btn" id="revPrev" type="button" title="Shift+Enter">◀ 上一個</button>
-          <button class="btn primary" id="revOk" type="button">✓ 正確，下一個（Enter）</button>
-          <button class="btn" id="revSkip" type="button">跳過 ▶</button>
-          <button class="btn" id="revUndo" type="button" hidden>取消確認</button>
-          <label class="field"><input type="checkbox" id="revOnlySus" checked>只跳到可疑的小節（取消勾選＝每個小節都看一次）</label>
-          <button class="btn" id="revExit" type="button">結束校對（Esc）</button>
-        </div>
-        <p class="note"><b>怎麼用：</b>對照上面的原譜，看「目前的內容」哪裡不一樣 → 用 ◀ ▶ 選到那個音 → 按按鈕修改。原譜上有、這裡卻沒有的音或休止符，先選好「點譜補音符／休止符」，再直接點原譜上它的位置。改好按「正確，下一個」。也可以點上方對照條的任一小節直接跳過去。<br>鍵盤：← → 選音 · ↑ ↓ 音高（Shift 升降半音）· 1 2 4 8 6 時值（全、二分、四分、八分、十六分）· . 附點 · ~ 連結線 · # b n 臨時記號 · 0 改成休止符 · Delete 刪除。原譜上漏掉的音，直接點它的位置就會補上。</p>
       </div>
       <div class="editbar idle" id="editbar" role="toolbar" aria-label="編輯選取的音符">
         <span class="note" id="selInfo">點選音符後，可在這裡調整</span>
@@ -626,7 +635,7 @@ function newSong(o={}){return {id:uid(),title:'新曲子',clef:'bass',key:0,bpm:
 function sampleSong(){return newSong({title:'さくらさくら（範例）',text:SAMPLE_TEXT,practices:[{id:uid(),name:'前半',from:1,to:6},{id:uid(),name:'後半',from:7,to:14}]});}
 
 let lib={songs:[],current:null};
-let prefs={pxBeat:70,bpl:4,scoreH:0,theme:'auto',tab:'edit',trans:0,timbre:'piano',countin:true,loop:false,speed:100,qdur:4,qtrip:false,beam:true};
+let prefs={pxBeat:70,bpl:4,scoreH:0,theme:'auto',tab:'import',trans:0,timbre:'piano',countin:true,loop:false,speed:100,qdur:4,qtrip:false,beam:true};
 (function load(){
   try{const l=JSON.parse(localStorage.getItem(STORE_LIB)||'null'); if(l&&Array.isArray(l.songs)) lib=l;}catch(e){}
   try{const p=JSON.parse(localStorage.getItem(STORE_PREF)||'null'); if(p) prefs={...prefs,...p};}catch(e){}
@@ -796,7 +805,7 @@ function singVoice(f,t0,dur,syl){
 }
 function voice(f,t0,dur,syl){
   // the score editor always uses piano; the timbre choice belongs to the practice tab
-  const tb=$('tab-edit').hidden?prefs.timbre:'piano';
+  const tb=$('tab-practice').hidden?'piano':prefs.timbre;
   if(tb==='sing') return singVoice(f,t0,dur,syl);
   const g=ctx.createGain(); g.connect(master); const end=t0+dur;
   if(tb==='piano'){
@@ -918,7 +927,7 @@ function renderSongSel(){
   sel.value=lib.current;
 }
 $('songSel').onchange=e=>{ stopAll(); closeLyricSilently(); lib.current=e.target.value; saveLib(true); loadSong(); };
-$('songNew').onclick=()=>{ stopAll(); const s=newSong(); lib.songs.push(s); lib.current=s.id; saveLib(true); loadSong(); setTab('edit'); $('songTitle').focus(); $('songTitle').select(); };
+$('songNew').onclick=()=>{ stopAll(); const s=newSong(); lib.songs.push(s); lib.current=s.id; saveLib(true); loadSong(); if(!$('tab-edit').hidden){ $('songTitle').focus(); $('songTitle').select(); } };
 let delArmed=null;
 $('songDel').onclick=()=>{
   const b=$('songDel');
@@ -1021,8 +1030,9 @@ $('impPaste').onclick=()=>{ $('impMsg').textContent=importData($('impText').valu
 
 function setTab(t){
   prefs.tab=t; savePrefs(); stopAll(); closeLyricSilently(); clearSel();
-  ['edit','practice'].forEach(n=>{ const on=n===t; $('tab-'+n).hidden=!on; $('tab-'+n).style.display=on?'flex':'none'; $('tabBtn-'+n).setAttribute('aria-selected',on); });
-  if(t==='practice') renderPractice(); else drawStaff();
+  ['import','edit','practice'].forEach(n=>{ const on=n===t; $('tab-'+n).hidden=!on; $('tab-'+n).style.display=on?'flex':'none'; $('tabBtn-'+n).setAttribute('aria-selected',on); });
+  if(REV.on&&t!=='import') endReview();
+  if(t==='practice') renderPractice(); else if(t==='edit') drawStaff(); else { refreshStripStatus(); if(REV.on) revDraw(); }
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
@@ -1039,7 +1049,9 @@ $('songTitle').addEventListener('input',e=>{ song().title=e.target.value; saveLi
 $('songBpm').addEventListener('change',e=>{ song().bpm=Math.max(30,Math.min(240,+e.target.value||80)); e.target.value=song().bpm; saveLib(); });
 $('songStart').addEventListener('change',e=>{ song().startBar=Math.max(0,+e.target.value||0); saveLib(); reparse(); updateStatus(); drawStaff(); });
 $('songTts').onchange=e=>{ song().ttsLang=e.target.value; saveLib(); };
-$('key').onchange=e=>{ song().key=+e.target.value; saveLib(); reparse(); updateStatus(); drawStaff(); };
+$('key').onchange=e=>{ song().key=+e.target.value; saveLib(); reparse(); updateStatus(); drawStaff(); syncScKey(); };
+function syncScKey(){ const a=$('key'), b=$('scKey'); if(!b) return; if(b.options.length!==a.options.length) b.innerHTML=a.innerHTML; b.value=a.value; }
+$('scKey').onchange=e=>{ $('key').value=e.target.value; $('key').onchange({target:$('key')}); };
 
 function updateStatus(){
   const st=$('status'); const out=[];
@@ -1134,7 +1146,7 @@ function layout(){
 }
 
 function drawStaff(){
-  const svg=$('staff'); if(!svg||$('tab-edit').hidden) return;
+  const svg=$('staff'); if(!svg||$('tab-edit').hidden){ if(typeof STRIPS!=='undefined'&&STRIPS.length) refreshStripStatus(); return; }
   layout();
   const T=P.toks, clef=song().clef, clefKey=clef==='bass'?'bass':'treble', kk=song().key, kp=KEY_POS[clefKey];
   const W=LAY.W, H=LAY.systems.length*SYS_H+6;
@@ -2131,7 +2143,7 @@ $('xmlGo').onclick=()=>{
   }catch(err){ impStatus('轉換失敗：'+(err.message||err)); }
 };
 $('xmlCancel').onclick=()=>{ $('xmlBox').hidden=true; XML=null; impStatus(''); };
-function syncKeySel(){ const k=$('key'); if(![...k.options].some(o=>+o.value===song().key)){ const o=document.createElement('option'); o.value=song().key; o.textContent=`${Math.abs(song().key)}${song().key>0?'♯':'♭'}`; k.append(o); } k.value=song().key; }
+function syncKeySel(){ const k=$('key'); if(![...k.options].some(o=>+o.value===song().key)){ const o=document.createElement('option'); o.value=song().key; o.textContent=`${Math.abs(song().key)}${song().key>0?'♯':'♭'}`; k.append(o); } k.value=song().key; syncScKey(); }
 
 /* ================= import: scan a PDF / image, pick one part, draft codes ================= */
 const PDFJS_URL='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
@@ -2267,7 +2279,7 @@ $('pdfFile').onchange=async e=>{
     const total=SCAN.pages.reduce((a,p)=>a+p.systems.length,0);
     if(!total){ impStatus('找不到五線譜。請用樂譜軟體輸出的 PDF；如果是拍照或掃描，請盡量拍正、拍清楚。'); closeScan(); return; }
     impStatus(`找到 ${total} 行譜。請點一下你的聲部那條五線譜。`);
-    $('scanBox').hidden=false; $('scStart').value=Math.max(0,+song().startBar||1); renderScan();
+    $('scanBox').hidden=false; syncScKey(); $('scStart').value=Math.max(0,+song().startBar||1); renderScan();
   }catch(err){ impStatus(err.message||'無法讀取這個檔案'); closeScan(); }
 };
 function closeScan(){ if(SCAN&&SCAN.url) URL.revokeObjectURL(SCAN.url); if(SCAN&&SCAN.kind==='pdf') try{ SCAN.src.destroy(); }catch(e){} SCAN=null; const b=$('scanBox'); if(b) b.hidden=true; }
@@ -2606,6 +2618,7 @@ $('scGo').onclick=async()=>{
   const lyIdx=$('scLyrWrap').hidden?-1:+$('scLyr').value;
   const startBar=bar; const lines=[]; const strips=[]; let nNotes=0, nSyl=0; const allBars=[];
   $('scGo').disabled=true;
+  if($('scTarget').value==='new'){ const k=+$('scKey').value; stopAll(); const ns=newSong({title:(SCAN.name||'').replace(/\.[^.]+$/,'')||'新曲子',clef,key:k,startBar,text:''}); lib.songs.push(ns); lib.current=ns.id; saveLib(true); loadSong(); syncKeySel(); }
   try{
     for(let pi=0;pi<SCAN.pages.length;pi++){
       const pg=SCAN.pages[pi]; if(!pg.systems.length) continue;
@@ -2673,11 +2686,11 @@ $('scGo').onclick=async()=>{
     if(clef!==song().clef){ song().clef=clef; saveLib(true); syncQE(); drawStaff(); }
     if(!P.toks.length&&+song().startBar!==startBar){ song().startBar=startBar; $('songStart').value=startBar; saveLib(true); reparse(); }
     song().review={done:{}}; saveLib(true);
-    $('codeIn').value=lines.join('\n'); renderCodePreview();
+    $('codeIn').value=lines.join('\n'); renderCodePreview(); applyCode();
     closeScan(); await showStrips();
     const sus=allBars.filter(r=>r.warn.length).length;
-    impStatus(`完成：${strips.length} 行、${bar-startBar} 小節、找到 ${nNotes} 個音`+(nSyl?`、${nSyl} 個歌詞音節`:'')+`，其中 ${sus} 個小節標成可疑。草稿已放進下方「快速輸入碼」，確認後按 Enter 套用，再用「逐小節校對」檢查。`);
-    $('codePanel').scrollIntoView({block:'start',behavior:'smooth'});
+    impStatus(`完成：${strips.length} 行、${bar-startBar} 小節、找到 ${nNotes} 個音`+(nSyl?`、${nSyl} 個歌詞音節`:'')+`，已經寫進這首曲子。其中 ${sus} 個小節標成可疑，按「逐小節校對」對照原譜修正。`);
+    $('stripPanel').scrollIntoView({block:'start',behavior:'smooth'});
   }catch(err){ impStatus('辨識失敗：'+(err.message||err)); console.error(err); }
   finally{ const g=$('scGo'); if(g) g.disabled=false; }
 };
@@ -2707,7 +2720,7 @@ async function showStrips(){
     d.innerHTML=`<img src="${u}" alt="第 ${i+1} 行"><svg viewBox="0 0 ${sp.w} ${sp.h}" preserveAspectRatio="none">${sp.bars.map(m=>`<g class="sbar" data-n="${m.n}"><rect class="bg" x="${m.x0}" y="0" width="${Math.max(4,m.x1-m.x0)}" height="${sp.h}"/><rect class="st" x="${m.x0+2}" y="0" width="${Math.max(4,m.x1-m.x0-4)}"/><text x="${m.x0+6}" y="18">${m.n}</text>${(m.marks||[]).map(k=>k.t==='r'?`<g class="mk r"><rect x="${k.x-r}" y="${k.y-r*2}" width="${r*2}" height="${r*4}" rx="3"/><text x="${k.x-r}" y="${k.y-r*2-4}">${esc(k.l)}</text></g>`:`<g class="mk ${k.t}"><circle cx="${k.x}" cy="${k.y}" r="${r}"/>${k.l?`<text x="${k.x-r}" y="${k.y-r-4}">${esc(k.l)}</text>`:''}</g>`).join('')}</g>`).join('')}</svg>`;
     d.style.aspectRatio=`${sp.w} / ${sp.h}`; list.append(d);
   });
-  list.querySelectorAll('.sbar').forEach(g=>g.addEventListener('click',()=>{ const n=+g.dataset.n; if(REV.on) revGo(n); else { if(P.bars[n]) goToBar(n); highlightBar(n); } }));
+  list.querySelectorAll('.sbar').forEach(g=>g.addEventListener('click',()=>{ const n=+g.dataset.n; if(!P.toks.length) return; if(!REV.on){ REV.on=true; $('revBox').hidden=false; } revGo(n); $('revBox').scrollIntoView({block:'start',behavior:'smooth'}); }));
   refreshStripStatus();
 }
 /* bar status: err = length doesn't match the others, warn = the scanner wasn't sure, done = you confirmed it */
@@ -2752,7 +2765,7 @@ function nextBar(dir,fromN,onlySus,skipDone){
 function startReview(){
   if(!STRIPS.length) return; REV.on=true; $('revBox').hidden=false;
   const odd=barLenOdd(); const first=allStripBars().find(x=>{ const c=barState(x.m,odd).cls; return c==='err'||c==='warn'; })||allStripBars().find(x=>barState(x.m,odd).cls!=='done')||allStripBars()[0];
-  $('qePanel').scrollIntoView({block:'start',behavior:'smooth'}); revGo(first.m.n);
+  $('revBox').scrollIntoView({block:'start',behavior:'smooth'}); revGo(first.m.n);
 }
 function endReview(){ REV.on=false; $('revBox').hidden=true; refreshStripStatus(); }
 function revGo(n){
@@ -2831,7 +2844,7 @@ $('revExit').onclick=endReview;
 $('revStart').onclick=()=>{ if(!P.toks.length){ $('stripSum').textContent='請先把草稿輸入碼按 Enter 套用，再開始校對'; return; } startReview(); };
 window.addEventListener('resize',()=>{ if(REV.on) revDraw(); });
 document.addEventListener('keydown',e=>{
-  if(!REV.on||$('tab-edit').hidden) return;
+  if(!REV.on||$('tab-import').hidden) return;
   const tag=document.activeElement&&document.activeElement.tagName; if(/^(INPUT|TEXTAREA|SELECT)$/.test(tag)&&document.activeElement.type!=='checkbox') return;
   if(revKey(e.key,e.shiftKey)){ e.preventDefault(); e.stopImmediatePropagation(); }
 },true);
@@ -2991,7 +3004,7 @@ $('themeBtn').onclick=()=>{ prefs.theme={auto:'light',light:'dark',dark:'auto'}[
 
 /* ================= boot ================= */
 if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>drawStaff());
-loadSong(); syncPrefsUI(); applyTheme(); renderCodePreview(); setTab(prefs.tab==='practice'?'practice':'edit');
+loadSong(); syncPrefsUI(); applyTheme(); renderCodePreview(); setTab('import');
 </script>
 
 </body>
