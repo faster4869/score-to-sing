@@ -635,8 +635,9 @@ body.role-member #myPanel{display:none}
         <h2 class="qe-title">我的曲子</h2>
         <span class="note exp-hint">可以改曲名、匯出或刪除。每首存成一個 .json 檔，放進 GitHub 的 <code>songs/</code> 資料夾，就會出現在團內曲庫</span>
       </div>
+      <p class="note gh-ok" id="ghOk" hidden>✓ 已連線團內曲庫，可以直接發布。 <button class="btn sm" id="ghReset" type="button">重新設定</button></p>
       <details class="gh-set" id="ghSet">
-        <summary>GitHub 發布設定 <span class="tag" id="ghState">未設定</span></summary>
+        <summary>GitHub 連線設定（只要設定一次） <span class="tag" id="ghState">未設定</span></summary>
         <div class="row" style="margin-top:8px">
           <label class="field">帳號 <input id="ghOwner" type="text" autocomplete="off" placeholder="例如 faster4869"></label>
           <label class="field">repo <input id="ghRepoIn" type="text" autocomplete="off" placeholder="例如 score-to-sing"></label>
@@ -647,7 +648,7 @@ body.role-member #myPanel{display:none}
           <button class="btn" id="ghClear" type="button">清除金鑰</button>
           <span class="note" id="ghMsg" aria-live="polite"></span>
         </div>
-        <p class="note">金鑰只存在這台裝置的瀏覽器裡，不會寫進網頁程式，團員拿不到。設定好後，每首歌後面會出現「發布」，按下去就直接更新團內曲庫，不用再下載、上傳。</p>
+        <p class="note">只需要一位管理員設定一次。設定好後，所有管理員只要用管理員密碼登入，就能直接把歌發布到團內曲庫，不用再下載、上傳。</p>
       </details>
       <div class="row exp-bar">
         <label class="field"><input type="checkbox" id="expAll">全選</label>
@@ -1140,7 +1141,9 @@ function downloadSong(sg){ const blob=new Blob([exportText(sg)],{type:'applicati
 const EXP_SEL=new Set();
 /* ---- publish straight to the GitHub repository (admin, with a personal token) ---- */
 const GH_KEY='seg-practice.gh';
-function ghCfg(){ let c={}; try{ c=JSON.parse(localStorage.getItem(GH_KEY)||'{}')||{}; }catch(e){} const d=ghRepo()||{}; return {owner:c.owner||d.owner||'',repo:c.repo||d.repo||'',token:c.token||'',ok:!!c.ok}; }
+function ghCfg(){ let c={}, x={}; try{ c=JSON.parse(localStorage.getItem(GH_KEY)||'{}')||{}; x=JSON.parse(sessionStorage.getItem(GH_KEY+'.shared')||'{}')||{}; }catch(e){} const d=ghRepo()||{};
+  if(!c.token&&x.token) return {owner:x.owner||c.owner||d.owner||'',repo:x.repo||c.repo||d.repo||'',token:x.token,ok:true,shared:true};
+  return {owner:c.owner||d.owner||'',repo:c.repo||d.repo||'',token:c.token||'',ok:!!c.ok}; }
 const ghReady=()=>{ const c=ghCfg(); return !!(c.owner&&c.repo&&c.token&&c.ok); };
 const ghPath=p=>p.split('/').map(encodeURIComponent).join('/');
 function ghErr(st){ return st===401?'金鑰無效或已過期':st===403?'金鑰沒有寫入這個 repo 的權限':st===404?'找不到這個 repo（帳號、repo 名稱不對，或金鑰沒有包含這個 repo）':st===409||st===422?'檔案剛好被別人改過，請再試一次':'GitHub 回應錯誤（'+st+'）'; }
@@ -1152,8 +1155,14 @@ async function ghPut(path,u8,msg){ const sha=await ghSha(path);
   const r=await ghApi('/contents/'+ghPath(path),{method:'PUT',body:JSON.stringify({message:msg,content:b64(u8),...(sha?{sha}:{})})}); if(!r.ok) throw new Error(ghErr(r.status)); }
 async function ghDel(path,msg){ const sha=await ghSha(path); if(!sha) return;
   const r=await ghApi('/contents/'+ghPath(path),{method:'DELETE',body:JSON.stringify({message:msg,sha})}); if(!r.ok) throw new Error(ghErr(r.status)); }
-async function publishSong(sg){
+async function ghGetJson(path){ const r=await ghApi('/contents/'+ghPath(path)); if(r.status===404) return null; if(!r.ok) throw new Error(ghErr(r.status)); const j=await r.json();
+  try{ const bin=atob((j.content||'').replace(/\s/g,'')); return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin,ch=>ch.charCodeAt(0)))); }catch(e){ return {}; } }
+async function publishSong(sg,force){
   const path='songs/'+fileNameOf(sg);
+  if(!force){ const remote=await ghGetJson(path);
+    if(remote){ const rs=remote.text!==undefined?songSig(songFields(remote)):'';
+      if(!sg.src||sg.src!==path){ if(rs!==songSig(sg)) throw Object.assign(new Error('團內曲庫已經有同名的歌（可能是其他管理員放的）'),{conflict:true}); }
+      else if(sg.srcSig&&rs&&rs!==sg.srcSig&&rs!==songSig(sg)) throw Object.assign(new Error('曲庫上的版本在你上次同步後被其他管理員改過'),{conflict:true}); } }
   for(const c of clipsOf(sg).filter(c=>c.src==='local')){ const rec=await AudioDB.get(c.id); if(rec) await ghPut('songs/'+c.file,new Uint8Array(await rec.blob.arrayBuffer()),'導讀錄音：'+sg.title); }
   await ghPut(path,new TextEncoder().encode(exportText(sg)),(sg.src?'更新：':'發布：')+sg.title);
   if(sg.src&&sg.src!==path){ try{ await ghDel(sg.src,'曲名改了，移除舊檔：'+sg.title); }catch(e){} }
@@ -1164,17 +1173,35 @@ async function unpublish(it){
   await ghDel('songs/'+it.file,'從曲庫刪除：'+(it.o.title||it.file));
   const local=lib.songs.find(x=>x.src==='songs/'+it.file); if(local){ delete local.src; delete local.srcText; delete local.srcSig; saveLib(true); }
 }
+const KEYFILE='admin-key.json';
+const ub64=t=>Uint8Array.from(atob(t),c=>c.charCodeAt(0));
+async function pwKey(pw,salt){ const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:250000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']); }
+async function sealToken(pw,c){ const salt=crypto.getRandomValues(new Uint8Array(16)), iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await pwKey(pw,salt),new TextEncoder().encode(c.token)));
+  return {v:1,owner:c.owner,repo:c.repo,salt:b64(salt),iv:b64(iv),ct:b64(ct)}; }
+async function openToken(pw,o){ const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:ub64(o.iv)},await pwKey(pw,ub64(o.salt)),ub64(o.ct)); return new TextDecoder().decode(pt); }
+async function fetchKeyFile(){
+  try{ const r=await fetch(KEYFILE,{cache:'no-cache'}); if(r.ok) return await r.json(); }catch(e){}
+  const d=ghCfg(); if(d.owner&&d.repo) try{ const r=await fetch(`https://api.github.com/repos/${encodeURIComponent(d.owner)}/${encodeURIComponent(d.repo)}/contents/${KEYFILE}`,{cache:'no-store'});
+    if(r.ok){ const j=await r.json(); return JSON.parse(new TextDecoder().decode(ub64((j.content||'').replace(/\s/g,'')))); } }catch(e){}
+  return null; }
+async function unlockSharedToken(pw){ if(ghCfg().token) return; const o=await fetchKeyFile(); if(!o||!o.ct) return;
+  try{ const token=await openToken(pw,o); sessionStorage.setItem(GH_KEY+'.shared',JSON.stringify({owner:o.owner,repo:o.repo,token})); }catch(e){} }
 function syncGhUI(){ const c=ghCfg(); $('ghOwner').value=c.owner; $('ghRepoIn').value=c.repo; $('ghToken').value=c.token?'••••••••':'';
-  $('ghState').textContent=ghReady()?'已連線':'未設定'; $('ghState').classList.toggle('warn',!ghReady()); }
+  $('ghState').textContent=ghReady()?'已連線':'未設定'; $('ghOk').hidden=!ghReady(); if(!$('ghSet').dataset.force) $('ghSet').hidden=ghReady(); $('ghState').classList.toggle('warn',!ghReady()); }
 $('ghSave').onclick=async()=>{ const old=ghCfg(); const tk=$('ghToken').value.trim(); const c={owner:$('ghOwner').value.trim(),repo:$('ghRepoIn').value.trim(),token:tk&&!/^•+$/.test(tk)?tk:old.token,ok:false};
   if(!c.owner||!c.repo||!c.token){ $('ghMsg').textContent='請填好帳號、repo 和金鑰'; return; }
   try{ localStorage.setItem(GH_KEY,JSON.stringify(c)); }catch(e){}
   $('ghMsg').textContent='測試中…';
   try{ const r=await ghApi(''); if(!r.ok) throw new Error(ghErr(r.status)); const j=await r.json();
     if(j.permissions&&!j.permissions.push) throw new Error('這組金鑰只能讀、不能寫，請把 Contents 權限設成 Read and write');
-    c.ok=true; localStorage.setItem(GH_KEY,JSON.stringify(c)); $('ghMsg').textContent='連線成功，可以發布了'; }
+    c.ok=true; localStorage.setItem(GH_KEY,JSON.stringify(c));
+    if(ADMIN_PW){ try{ await ghPut(KEYFILE,new TextEncoder().encode(JSON.stringify(await sealToken(ADMIN_PW,c))),'管理員共用連線'); $('ghMsg').textContent='連線成功。其他管理員用管理員密碼登入就能直接發布'; }catch(err){ $('ghMsg').textContent='連線成功，但無法分享給其他管理員：'+err.message; } }
+    else $('ghMsg').textContent='連線成功。要讓其他管理員也能發布，請重新用管理員密碼登入後再按一次「儲存並測試」'; }
   catch(err){ $('ghMsg').textContent='連線失敗：'+err.message; }
   syncGhUI(); renderExport(); if(sharedCache) renderShared(); };
+$('ghReset').onclick=()=>{ $('ghSet').dataset.force='1'; $('ghSet').hidden=false; $('ghSet').open=true; };
 $('ghClear').onclick=()=>{ const c=ghCfg(); try{ localStorage.setItem(GH_KEY,JSON.stringify({owner:c.owner,repo:c.repo})); }catch(e){} $('ghMsg').textContent='已清除金鑰'; syncGhUI(); renderExport(); if(sharedCache) renderShared(); };
 $('expPub').onclick=async()=>{ const list=lib.songs.filter(x=>EXP_SEL.has(x.id)); let k=0;
   for(const sg of list){ $('expMsg').textContent=`發布中… ${k}／${list.length}`; try{ await publishSong(sg); k++; }catch(err){ $('expMsg').textContent=`「${sg.title}」發布失敗：${err.message}`; renderExport(); return; } }
@@ -1192,7 +1219,11 @@ function renderExport(){
       <button class="btn" type="button" data-act="copy">複製文字</button>
       <button class="btn${ghReady()?'':' primary'}" type="button" data-act="dl">下載 .json</button>
       <button class="btn danger" type="button" data-act="del">刪除</button>`;
-    const pb=row.querySelector('[data-act=pub]'); if(pb) pb.onclick=async()=>{ pb.disabled=true; pb.textContent='發布中…'; try{ await publishSong(sg); $('expMsg').textContent=`已發布「${sg.title}」，團員重新打開網頁就會看到`; }catch(err){ $('expMsg').textContent='發布失敗：'+err.message; } renderExport(); loadShared(); };
+    const pb=row.querySelector('[data-act=pub]'); if(pb) pb.onclick=async()=>{ const force=pb.dataset.force==='1'; pb.disabled=true; pb.textContent='發布中…';
+      try{ await publishSong(sg,force); $('expMsg').textContent=`已發布「${sg.title}」，團員重新打開網頁就會看到`; }
+      catch(err){ if(err.conflict){ $('expMsg').textContent=`「${sg.title}」：${err.message}。建議先到下方團內曲庫按「更新」看過再改；確定要用你的版本蓋掉，再按一次「強制覆蓋」。`; pb.disabled=false; pb.dataset.force='1'; pb.textContent='強制覆蓋'; pb.classList.add('danger'); return; }
+        $('expMsg').textContent='發布失敗：'+err.message; }
+      renderExport(); loadShared(); };
     row.querySelector('.name-in').oninput=e=>{ sg.title=e.target.value; saveLib(); row.querySelector('.fn').textContent=fileNameOf(sg); };
     let armed=null; row.querySelector('[data-act=del]').onclick=e=>{ const b=e.currentTarget;
       if(!armed){ b.textContent='再按一次刪除'; armed=setTimeout(()=>{ armed=null; b.textContent='刪除'; },3000); return; }
@@ -3245,7 +3276,7 @@ if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>drawStaff
 // 管理員密碼的 SHA-256。要換密碼：把新密碼的 SHA-256 貼在這裡（預設密碼 choir2026）
 const ADMIN_HASH='2fb1851b858a5215f138ce59879f266ec59d44da462691a84a307d3f022074f1';
 const ROLE_KEY='seg-practice.role';
-var ROLE=null;
+var ROLE=null, ADMIN_PW='';
 async function sha256hex(t){ const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
 function applyRole(r,first){
   ROLE=r; document.body.classList.toggle('role-member',r==='member'); document.body.classList.toggle('role-admin',r==='admin');
@@ -3261,7 +3292,7 @@ $('gateBack').onclick=()=>{ $('gatePick').hidden=false; $('gatePass').hidden=tru
 $('gatePass').onsubmit=async e=>{ e.preventDefault();
   let h=''; try{ h=await sha256hex($('gatePw').value); }catch(err){ $('gateErr').textContent='這個瀏覽器無法驗證密碼（請用 https 網址開啟）'; return; }
   if(h!==ADMIN_HASH){ $('gateErr').textContent='密碼不對，請再試一次'; $('gatePw').select(); return; }
-  try{ localStorage.setItem(ROLE_KEY,'admin'); sessionStorage.setItem(ROLE_KEY,'ok'); }catch(err){} applyRole('admin'); };
+  try{ localStorage.setItem(ROLE_KEY,'admin'); sessionStorage.setItem(ROLE_KEY,'ok'); }catch(err){} ADMIN_PW=$('gatePw').value; await unlockSharedToken(ADMIN_PW).catch(()=>{}); applyRole('admin'); };
 $('roleBtn').onclick=showGate;
 loadSong(); syncPrefsUI(); applyTheme(); renderCodePreview();
 (()=>{ let saved=null, ok=null; try{ saved=localStorage.getItem(ROLE_KEY); ok=sessionStorage.getItem(ROLE_KEY); }catch(e){}
