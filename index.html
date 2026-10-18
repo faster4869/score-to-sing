@@ -214,6 +214,12 @@ summary{cursor:pointer;font-weight:500}
 .play svg{width:16px;height:16px;fill:currentColor}
 .card.active .play{background:var(--hot,#d93a2b)}
 .psong{max-width:14em;min-width:0}
+.card .order{display:flex;flex-direction:column;gap:2px}
+.mini .btn.on{background:var(--hot,#d93a2b);color:#1a1a1a;border-color:transparent}
+.card .order .btn{padding:0 6px;font-size:10px;line-height:16px}
+.card-opts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--line)}
+.card-opts .o-speedv{font:600 13px var(--mono);min-width:3.2em;display:inline-block}
+.card.collapsed .card-opts,.card.collapsed .roll-scroll{display:none}
 .btn.sm{padding:3px 8px;font-size:12px}
 .pname{font:500 16px/1.3 var(--jp);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 6px;min-width:6em;flex:1;max-width:18em}
 .pname:hover,.pname:focus{border-color:var(--line);background:var(--sunk)}
@@ -577,17 +583,9 @@ summary{cursor:pointer;font-weight:500}
 
   <!-- ============ 練唱 ============ -->
   <section id="tab-practice" role="tabpanel" aria-labelledby="tabBtn-practice" hidden style="flex-direction:column;gap:14px">
-    <div class="panel pbar" role="toolbar" aria-label="播放設定">
-      <label class="field">速度 <input id="speed" type="range" min="40" max="130" step="5" value="100"><b id="speedv">100%</b></label>
-      <label class="field">移調 <select id="trans"></select></label>
-      <div class="field">音色
-        <div class="seg" id="timbre">
-          <button type="button" data-v="piano" aria-pressed="true">鋼琴</button>
-          <button type="button" data-v="voice" aria-pressed="false">人聲</button>
-          <button type="button" data-v="sing" aria-pressed="false" title="母音跟著歌詞變化的哼唱">哼唱</button>
-        </div></div>
+    <div class="panel pbar" role="toolbar" aria-label="所有卡片共用的設定">
+      <span class="note">所有卡片共用：</span>
       <label class="field"><input id="countin" type="checkbox" checked>預備拍</label>
-      <label class="field"><input id="loop" type="checkbox">反覆</label>
       <label class="field" title="拉寬可以讓歌詞和音名不擠在一起">小節寬度 <input id="pxBeat" type="range" min="40" max="160" step="10"></label>
     </div>
     <section class="panel" id="guidePanel" aria-label="導讀錄音">
@@ -604,7 +602,7 @@ summary{cursor:pointer;font-weight:500}
       <p class="note">請指揮或聲部長念一遍歌詞錄下來。填上對應的小節後，那個範圍的練習卡片會出現「導讀」按鈕。錄音只存在這台裝置；要分享給團員，按「下載」拿到錄音檔，和「匯出」的 .json 一起放進網站的 <code>songs/</code> 資料夾。</p>
     </section>
     <div class="list" id="plist"></div>
-    <div class="row"><button class="btn primary" id="addPractice" type="button">＋ 新增練習</button><span class="note" id="barRange"></span></div>
+    <div class="row"><button class="btn primary" id="addPractice" type="button">＋ 新增練習</button><button class="btn" id="foldAll" type="button">全部收合</button><button class="btn" id="unfoldAll" type="button">全部展開</button><span class="note" id="barRange"></span></div>
   </section>
 </div>
 
@@ -648,9 +646,12 @@ let prefs={pxBeat:70,bpl:4,scoreH:0,theme:'auto',tab:'import',trans:0,timbre:'pi
   if(!lib.songs.some(s=>s.id===lib.current)) lib.current=lib.songs[0].id;
   if(!Array.isArray(lib.plan)){ lib.plan=[]; lib.songs.forEach(s=>(s.practices||[]).forEach(p=>lib.plan.push({id:p.id||uid(),songId:s.id,name:p.name,from:p.from,to:p.to}))); }
 })();
-function planAdd(s,prs){ (prs||[]).forEach(p=>lib.plan.push({id:uid(),songId:s.id,name:p.name,from:p.from,to:p.to})); }
+const PR_DEF={speed:100,trans:0,timbre:'piano',loop:false};
+lib.plan.forEach(p=>{ for(const k in PR_DEF) if(p[k]===undefined) p[k]=k==='speed'?(prefs.speed||100):k==='trans'?(prefs.trans||0):k==='timbre'?(prefs.timbre||'piano'):!!prefs.loop; });
+function planAdd(s,prs){ (prs||[]).forEach(p=>lib.plan.push({id:uid(),songId:s.id,name:p.name,from:p.from,to:p.to,...PR_DEF})); }
 let saveT;
 function saveLib(now){ clearTimeout(saveT); const f=()=>{try{localStorage.setItem(STORE_LIB,JSON.stringify(lib));}catch(e){}}; if(now) f(); else saveT=setTimeout(f,300); }
+addEventListener('pagehide',()=>{ if(saveT){ clearTimeout(saveT); try{localStorage.setItem(STORE_LIB,JSON.stringify(lib));}catch(e){} } });
 function savePrefs(){try{localStorage.setItem(STORE_PREF,JSON.stringify(prefs));}catch(e){}}
 const song=()=>lib.songs.find(s=>s.id===lib.current)||lib.songs[0];
 const songById=id=>lib.songs.find(s=>s.id===id);
@@ -740,7 +741,8 @@ function ensureCtx(){
     const comp=ctx.createDynamicsCompressor(); master.connect(comp).connect(ctx.destination);}
   if(ctx.state==='suspended') ctx.resume();
 }
-const freq=m=>440*Math.pow(2,(m+prefs.trans-69)/12);
+let PLAY_OPT=null;
+const freq=(m,tr)=>440*Math.pow(2,(m+(tr!==undefined?tr:PLAY_OPT?PLAY_OPT.trans:0)-69)/12);
 const live=new Set();
 function track(node){live.add(node);node.onended=()=>live.delete(node);}
 /* ---- vowel singing: formants follow the lyric's kana ---- */
@@ -810,7 +812,7 @@ function singVoice(f,t0,dur,syl){
 }
 function voice(f,t0,dur,syl){
   // the score editor always uses piano; the timbre choice belongs to the practice tab
-  const tb=$('tab-practice').hidden?'piano':prefs.timbre;
+  const tb=PLAY_OPT?PLAY_OPT.timbre:'piano';
   if(tb==='sing') return singVoice(f,t0,dur,syl);
   const g=ctx.createGain(); g.connect(master); const end=t0+dur;
   if(tb==='piano'){
@@ -840,11 +842,11 @@ function click(t,accent){
   o.connect(g).connect(master); g.gain.setValueAtTime(.3,t); g.gain.exponentialRampToValueAtTime(.001,t+.06);
   o.start(t); o.stop(t+.08); track(o);
 }
-const bpmNow=()=>Math.max(20,(+(PLAY_SONG||song()).bpm||80)*prefs.speed/100);
+const bpmNow=()=>Math.max(20,(+(PLAY_SONG||song()).bpm||80)*(PLAY_OPT?PLAY_OPT.speed:100)/100);
 let play=null;
 function stopAll(){
   if(typeof stopGuide==='function') stopGuide();
-  if(play){cancelAnimationFrame(play.raf); play=null;} PLAY_SONG=null;
+  if(play){cancelAnimationFrame(play.raf); play=null;} PLAY_SONG=null; PLAY_OPT=null; if(typeof speakStop==='function'&&SPEAK_BTN) speakStop();
   live.forEach(n=>{try{n.stop();}catch(e){}}); live.clear();
   document.querySelectorAll('.col.on,#staff g.on').forEach(e=>e.classList.remove('on'));
   document.querySelectorAll('.card.playing').forEach(e=>e.classList.remove('playing'));
@@ -874,7 +876,7 @@ function playList(list,withCount=prefs.countin){
   stopAll(); ensureCtx();
   const good=list.filter(s=>s&&s.items.some(x=>!x.rest));
   if(!good.length) return;
-  PLAY_SONG=good[0].song||null;
+  PLAY_SONG=good[0].song||null; PLAY_OPT=good[0].opt||null;
   const sch=schedule(good,ctx.currentTime+.08,withCount);
   play={list:good,...sch,raf:0};
   const tick=()=>{
@@ -896,7 +898,7 @@ function playList(list,withCount=prefs.countin){
       }
     }
     if(now>=play.endAt){
-      if(prefs.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false); play.timeline=s.timeline; play.endAt=s.endAt;}
+      if(PLAY_OPT&&PLAY_OPT.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false); play.timeline=s.timeline; play.endAt=s.endAt;}
       else if(now>=play.endAt+.2){stopAll();return;}
     }
     play.raf=requestAnimationFrame(tick);
@@ -907,7 +909,10 @@ const TTS_LANGS={'ja-JP':'日文','zh-TW':'中文','en-US':'英文','hak-TW':'�
 // ecclesiastical Latin spelled so an Italian voice reads it the church way
 function latinForItalian(t){ return t.toLowerCase().replace(/æ|ae/g,'e').replace(/œ|oe/g,'e').replace(/([^stx])ti(?=[aeiou])/g,'$1zi').replace(/^ti(?=[aeiou])/,'zi').replace(/j/g,'i').replace(/y/g,'i').replace(/\bh/g,'').replace(/xc(?=[ei])/g,'ksc'); }
 /* returns '' when it spoke, otherwise a short reason to show the person */
-function speak(items,sg){
+let SPEAK_BTN=null;
+function speakReset(){ if(SPEAK_BTN){ SPEAK_BTN.textContent='念歌詞'; SPEAK_BTN.classList.remove('on'); SPEAK_BTN=null; } }
+function speakStop(){ speakReset(); try{ speechSynthesis.cancel(); }catch(e){} }
+function speak(items,sg,btn){
   const pick=(sg||song()).ttsLang||'ja-JP';
   if(pick==='off') return '這首曲子設定為不念歌詞';
   const lang=pick==='la'?'it-IT':pick;
@@ -921,7 +926,8 @@ function speak(items,sg){
     let v=voices.find(x=>x.lang.replace('_','-').toLowerCase()===lang.toLowerCase())||voices.find(x=>x.lang.toLowerCase().startsWith(base));
     if(lang==='hak-TW'&&!v) return '這台裝置沒有客家話語音，所以念不出來';
     speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(text); u.lang=lang; u.rate=.8; if(v) u.voice=v;
+    speakReset(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; u.rate=.8; if(v) u.voice=v;
+    if(btn){ SPEAK_BTN=btn; btn.textContent='■ 停止念'; btn.classList.add('on'); const done=()=>{ if(SPEAK_BTN===btn) speakReset(); }; u.onend=done; u.onerror=done; }
     speechSynthesis.speak(u);
     return voices.length&&!v?`這台裝置沒有${TTS_LANGS[lang]||TTS_LANGS[pick]}語音，可能念得不準`:'';
   }catch(e){ return '這台裝置不支援朗讀'; }
@@ -1757,13 +1763,13 @@ const extOf=m=>/mp4|aac|m4a/.test(m)?'m4a':/mpeg|mp3/.test(m)?'mp3':/ogg/.test(m
 function guideMsg(t){ const m=$('guideMsg'); if(m){ m.textContent=t; clearTimeout(guideMsg.t); if(t) guideMsg.t=setTimeout(()=>{m.textContent='';},5000); } }
 let gAudio=null, gUrl=null, gBtn=null;
 function stopGuide(){ if(gAudio){ gAudio.pause(); gAudio=null; } if(gUrl){ URL.revokeObjectURL(gUrl); gUrl=null; } if(gBtn){ gBtn.textContent=gBtn.dataset.label; gBtn=null; } }
-async function playClip(c,btn){
+async function playClip(c,btn,rate){
   const was=gBtn===btn; stopAll(); if(was) return;
   let url;
   if(c.src==='local'){ try{ const rec=await AudioDB.get(c.id); if(!rec) throw 0; url=gUrl=URL.createObjectURL(rec.blob); }catch(e){ guideMsg('這台裝置上找不到這段錄音'); return; } }
   else url='songs/'+encodeURIComponent(c.file);
   const a=new Audio(url); gAudio=a; gBtn=btn; btn.dataset.label=btn.dataset.label||btn.textContent; btn.textContent='■ 停止';
-  try{ a.preservesPitch=true; }catch(e){} a.playbackRate=Math.max(.5,Math.min(1.5,prefs.speed/100));
+  try{ a.preservesPitch=true; }catch(e){} a.playbackRate=Math.max(.5,Math.min(1.5,(rate||100)/100));
   a.onended=()=>{ if(gAudio===a) stopGuide(); };
   a.onerror=()=>{ if(gAudio===a){ stopGuide(); guideMsg(c.src==='local'?'這段錄音無法播放':`找不到錄音檔 songs/${c.file}`); } };
   a.play().catch(()=>{ if(gAudio===a){ stopGuide(); guideMsg('無法播放這段錄音'); } });
@@ -2903,7 +2909,7 @@ function practiceSeg(pr,card){
   const t0=Q.bars[from]&&Q.bars[from].start!=null?Math.min(Q.bars[from].start,ev[0].start):ev[0].start;
   const items=ev.map((e,i)=>({...e,start:e.start-t0,cont:i===0?false:e.cont}));
   const endB=Q.bars[to]&&Q.bars[to].end!=null?Q.bars[to].end-t0:Math.max(...items.map(x=>x.start+x.dur));
-  return {items,beats:endB,card,song:sg,lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
+  return {items,beats:endB,card,song:sg,opt:{speed:pr.speed||100,trans:pr.trans||0,timbre:pr.timbre||'piano',loop:!!pr.loop},lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
 }
 function songRange(sg){ const Q=parsedOf(sg); return Q.barNums.length?[Q.barNums[0],Q.barNums[Q.barNums.length-1]]:null; }
 function renderPractice(){ renderGuides(); renderCards(); }
@@ -2918,7 +2924,9 @@ function practiceCard(pr){
   const card=document.createElement('article'); card.className='card';
   const sg=songById(pr.songId); const rg=songRange(sg)||[1,1]; const [a,b]=rg;
   const opts=lib.songs.map(x=>`<option value="${x.id}"${x.id===sg.id?' selected':''}>${esc(x.title||'未命名')}</option>`).join('');
+  card.className='card'+(pr.collapsed?' collapsed':'');
   card.innerHTML=`<div class="card-head">
+      <div class="order"><button class="btn sm" type="button" data-act="up" title="往上移" aria-label="往上移">▲</button><button class="btn sm" type="button" data-act="down" title="往下移" aria-label="往下移">▼</button></div>
       <button class="play" type="button" aria-label="播放">${PLAY_ICON}</button>
       <input class="pname" type="text" value="${esc(pr.name)}" aria-label="練習名稱">
       <select class="psong" aria-label="曲子">${opts}</select>
@@ -2929,16 +2937,25 @@ function practiceCard(pr){
         ${'speechSynthesis' in window?'<button class="btn" type="button" data-act="speak">念歌詞</button>':''}
         ${clipsFor(pr).map((c,i)=>`<button class="btn guide" type="button" data-clip="${i}">▶ 導讀${clipsFor(pr).length>1?'：'+esc(c.label||''):''}</button>`).join('')}
         <button class="btn danger" type="button" data-act="del">刪除</button>
+        <button class="btn" type="button" data-act="fold" aria-expanded="${!pr.collapsed}">${pr.collapsed?'展開':'收合'}</button>
       </div></div>
+    <div class="card-opts">
+      <label class="field">速度 <input class="o-speed" type="range" min="40" max="130" step="5" value="${pr.speed||100}"><b class="o-speedv">${pr.speed||100}%</b></label>
+      <label class="field">移調 <select class="o-trans">${TRANS_OPTS}</select></label>
+      <div class="field">音色 <div class="seg o-timbre"><button type="button" data-v="piano">鋼琴</button><button type="button" data-v="voice">人聲</button><button type="button" data-v="sing" title="母音跟著歌詞變化的哼唱">哼唱</button></div></div>
+      <label class="field"><input class="o-loop" type="checkbox"${pr.loop?' checked':''}>反覆</label>
+    </div>
     <div class="roll-scroll"><div class="roll"></div></div>`;
-  card.querySelectorAll('[data-clip]').forEach(btn=>{ const c=clipsFor(pr)[+btn.dataset.clip]; btn.onclick=()=>playClip(c,btn); });
+  card.querySelector('.o-trans').value=pr.trans||0;
+  const syncTb=()=>card.querySelectorAll('.o-timbre button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===(pr.timbre||'piano'))); syncTb();
+  card.querySelectorAll('[data-clip]').forEach(btn=>{ const c=clipsFor(pr)[+btn.dataset.clip]; btn.onclick=()=>playClip(c,btn,pr.speed); });
   let seg=null;
   const build=()=>{
     const roll=card.querySelector('.roll'); roll.innerHTML='';
     seg=practiceSeg(pr,card);
     const meta=card.querySelector('.meta');
     if(!seg){ roll.innerHTML=`<p class="note">${songRange(sg)?'這個範圍沒有音符':'這首曲子還沒有音符'}</p>`; meta.textContent=''; return; }
-    card._meta=()=>{ meta.textContent=`${fmtB(seg.beats)} 拍 · ♩=${Math.round(Math.max(20,(+sg.bpm||80)*prefs.speed/100))}`; }; card._meta();
+    card._meta=()=>{ meta.textContent=`${fmtB(seg.beats)} 拍 · ♩=${Math.round(Math.max(20,(+sg.bpm||80)*(pr.speed||100)/100))}`; }; card._meta();
     const notes=seg.items.filter(x=>!x.rest);
     const lo=notes.length?Math.min(...notes.map(n=>n.midi))-1:60, hi=notes.length?Math.max(...notes.map(n=>n.midi))+1:66, range=Math.max(hi-lo,6);
     let lastBar=null;
@@ -2971,8 +2988,19 @@ function practiceCard(pr){
     pr.songId=ns.id; const r=songRange(ns)||[1,1]; pr.from=r[0]; pr.to=r[1]; save(); card.replaceWith(practiceCard(pr));
   };
   card.querySelector('.play').onclick=e=>{ const btn=e.currentTarget; if(card.classList.contains('active')){ stopAll(); try{speechSynthesis.cancel();}catch(_){} return; } if(!seg) return; playList([seg]); if(!play) return; card.classList.add('active'); btn.innerHTML=STOP_ICON; btn.setAttribute('aria-label','停止'); };
-  card.querySelector('[data-act=start]').onclick=()=>{ const n=seg&&seg.items.find(x=>!x.rest); if(n){ensureCtx(); voice(freq(n.midi),ctx.currentTime+.02,1.2);} };
-  const sp=card.querySelector('[data-act=speak]'); if(sp) sp.onclick=()=>{ if(!seg) return; const msg=speak(seg.items,sg); const m=card.querySelector('.meta'); if(msg){ const old=m.textContent; m.textContent=msg; setTimeout(()=>{m.textContent=old;},3500);} };
+  card.querySelector('[data-act=start]').onclick=()=>{ const n=seg&&seg.items.find(x=>!x.rest); if(n){ ensureCtx(); const keep=PLAY_OPT; PLAY_OPT=seg.opt; voice(freq(n.midi),ctx.currentTime+.02,1.2); PLAY_OPT=keep; } };
+  const restartIfPlaying=()=>{ if(card.classList.contains('active')){ stopAll(); } };
+  const optChanged=()=>{ save(); seg&&(seg.opt={speed:pr.speed||100,trans:pr.trans||0,timbre:pr.timbre||'piano',loop:!!pr.loop}); card._meta&&card._meta(); };
+  card.querySelector('.o-speed').oninput=e=>{ pr.speed=+e.target.value; card.querySelector('.o-speedv').textContent=pr.speed+'%'; restartIfPlaying(); optChanged(); };
+  card.querySelector('.o-trans').onchange=e=>{ pr.trans=+e.target.value; restartIfPlaying(); optChanged(); };
+  card.querySelectorAll('.o-timbre button').forEach(b=>b.onclick=()=>{ pr.timbre=b.dataset.v; syncTb(); restartIfPlaying(); optChanged(); });
+  card.querySelector('.o-loop').onchange=e=>{ pr.loop=e.target.checked; if(PLAY_OPT&&card.classList.contains('active')) PLAY_OPT.loop=pr.loop; optChanged(); };
+  card.querySelector('[data-act=fold]').onclick=e=>{ pr.collapsed=!pr.collapsed; card.classList.toggle('collapsed',pr.collapsed); e.currentTarget.textContent=pr.collapsed?'展開':'收合'; e.currentTarget.setAttribute('aria-expanded',!pr.collapsed); save(); };
+  const move=d=>{ const i=lib.plan.indexOf(pr), j=i+d; if(i<0||j<0||j>=lib.plan.length) return; [lib.plan[i],lib.plan[j]]=[lib.plan[j],lib.plan[i]]; saveLib(true);
+    const sib=d<0?card.previousElementSibling:card.nextElementSibling; if(sib){ if(d<0) sib.before(card); else sib.after(card); } card.scrollIntoView({block:'nearest'}); };
+  card.querySelector('[data-act=up]').onclick=()=>move(-1);
+  card.querySelector('[data-act=down]').onclick=()=>move(1);
+  const sp=card.querySelector('[data-act=speak]'); if(sp) sp.onclick=()=>{ if(SPEAK_BTN===sp){ speakStop(); return; } if(!seg) return; if(card.classList.contains('active')) stopAll(); const msg=speak(seg.items,sg,sp); const m=card.querySelector('.meta'); if(msg){ const old=m.textContent; m.textContent=msg; setTimeout(()=>{m.textContent=old;},3500);} };
   let armed=null;
   card.querySelector('[data-act=del]').onclick=e=>{
     const btn=e.currentTarget;
@@ -2981,30 +3009,26 @@ function practiceCard(pr){
   };
   return card;
 }
+const foldAll=v=>{ lib.plan.forEach(p=>p.collapsed=v); saveLib(true); renderCards(); };
+$('foldAll').onclick=()=>foldAll(true); $('unfoldAll').onclick=()=>foldAll(false);
 $('addPractice').onclick=()=>{
   const sg=song(); const r=songRange(sg);
   const last=[...lib.plan].reverse().find(p=>p.songId===sg.id);
   let from=r?r[0]:1, to=r?r[1]:1, name=sg.title;
   if(last&&r&&!(last.from===r[0]&&last.to===r[1])){ from=Math.min(r[1],last.to+1); to=Math.min(r[1],from+3); name=`${sg.title} ${from}–${to}`; }
-  lib.plan.push({id:uid(),songId:sg.id,name,from,to}); saveLib(true); renderPractice();
+  lib.plan.push({id:uid(),songId:sg.id,name,from,to,...PR_DEF}); saveLib(true); renderPractice();
   const cards=$('plist').querySelectorAll('.card'); const c=cards[cards.length-1]; if(c){ c.scrollIntoView({block:'nearest'}); }
 };
 
 /* practice settings */
-const transSel=$('trans');
-for(let i=12;i>=-12;i--){const o=document.createElement('option');o.value=i;o.textContent=i===0?'原調':(i>0?'+':'')+i+(Math.abs(i)===12?'（八度）':'');transSel.append(o);}
+const TRANS_OPTS=(()=>{ let h=''; for(let i=12;i>=-12;i--) h+=`<option value="${i}">${i===0?'原調':(i>0?'+':'')+i+(Math.abs(i)===12?'（八度）':'')}</option>`; return h; })();
+const transSel={value:0};
 function syncPrefsUI(){
   $('pxBeat').value=pxBeat();
-  $('speed').value=prefs.speed; $('speedv').textContent=`${prefs.speed}%`; document.querySelectorAll('#plist .card').forEach(c=>c._meta&&c._meta()); transSel.value=prefs.trans;
-  $('countin').checked=prefs.countin; $('loop').checked=prefs.loop;
-  document.querySelectorAll('#timbre button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===prefs.timbre));
+  $('countin').checked=prefs.countin;
 }
-$('speed').oninput=e=>{prefs.speed=+e.target.value;savePrefs();syncPrefsUI();};
-transSel.onchange=e=>{prefs.trans=+e.target.value;savePrefs();};
 $('countin').onchange=e=>{prefs.countin=e.target.checked;savePrefs();};
-$('loop').onchange=e=>{prefs.loop=e.target.checked;savePrefs();};
 let pxT; $('pxBeat').oninput=e=>{ prefs.pxBeat=+e.target.value; savePrefs(); clearTimeout(pxT); pxT=setTimeout(()=>{ stopAll(); renderPractice(); },60); };
-document.querySelectorAll('#timbre button').forEach(b=>b.onclick=()=>{prefs.timbre=b.dataset.v;savePrefs();syncPrefsUI();});
 
 /* ================= theme ================= */
 const HOST_THEME=document.documentElement.getAttribute('data-theme');
