@@ -225,12 +225,14 @@ summary{cursor:pointer;font-weight:500}
 .gate-card #gatePick,.gate-card form{display:flex;flex-direction:column;gap:10px}
 .gate-btn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:14px 16px;font-size:17px;text-align:left}
 .gate-btn small{font-size:13px;opacity:.8;font-weight:400}
-.gate-card input[type=password]{padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--sunk);color:var(--fg);font-size:16px}
+.gate-card input[type=password]{padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--sunk);color:var(--ink);font-size:16px}
 .gate-err{color:var(--err);min-height:1em;margin:0}
 body.role-member #tabBtn-import,body.role-member #tabBtn-edit{display:none}
 body.role-member .exp-bar,body.role-member .exp-row input[type=checkbox],body.role-member .exp-row [data-act=dl],body.role-member .exp-row [data-act=copy],body.role-member .exp-note,body.role-member .exp-hint{display:none}
 body.role-member #sharedPanel{order:-1}
 body.role-member #myPanel{display:none}
+#toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,140%);max-width:min(560px,calc(100% - 32px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:60;transition:transform .25s;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+#toast.on{transform:translate(-50%,0)}
 .tag.warn{background:#E0A100;color:#1a1a1a}
 .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accent);color:var(--accent-ink);margin-right:4px}
 .exp-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}
@@ -713,7 +715,7 @@ function savePrefs(){try{localStorage.setItem(STORE_PREF,JSON.stringify(prefs));
 const song=()=>lib.songs.find(s=>s.id===lib.current)||lib.songs[0];
 const songById=id=>lib.songs.find(s=>s.id===id);
 const PCACHE=new Map();
-function parsedOf(s){ if(s===song()&&typeof P!=='undefined'&&P) return P; const k=[s.text,s.key,s.clef,s.startBar].join('\u0001'); const c=PCACHE.get(s.id); if(c&&c.k===k) return c.P; const v=parseSong(s); PCACHE.set(s.id,{k,P:v}); return v; }
+function parsedOf(s){ const k=[s.text,s.key,s.clef,s.startBar].join('\u0001'); const c=PCACHE.get(s.id); if(c&&c.k===k) return c.P; const v=parseSong(s); PCACHE.set(s.id,{k,P:v}); return v; }
 let PLAY_SONG=null;
 
 /* ================= music basics ================= */
@@ -1037,7 +1039,7 @@ async function loadShared(){
     if((!r||!r.ok)&&SHARED_RAW[f]) try{ r=await fetch(SHARED_RAW[f],{cache:'no-cache'}); }catch(e){}
     if(!r||!r.ok) return {file:f,bad:true,why:'網站還沒更新到這個檔案，請過 1～2 分鐘再按「重新整理」'};
     try{ const o=JSON.parse(await r.text()); if(!o||typeof o.text!=='string') throw 0; return {file:f,o}; }catch(e){ return {file:f,bad:true,why:'檔案格式不對，無法讀取'}; } }));
-  sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; renderShared();
+  sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; if(typeof ROLE!=='undefined'&&ROLE==='member') autoUpdateShared(); renderShared();
 }
 // a song you imported yourself and then uploaded is the same song as the library copy: link them, merge duplicates
 const songSig=o=>JSON.stringify([String(o.title||''),o.clef,+o.key||0,+o.bpm||80,+o.startBar||0,o.ttsLang||'ja-JP',o.text||'']);
@@ -1058,6 +1060,16 @@ function linkShared(){
   });
   if(changed){ saveLib(true); loadSong(); if(!$('tab-export').hidden) renderExport(); }
 }
+// members can't edit, so their copies simply follow the library
+function autoUpdateShared(){
+  const done=[]; const aSig=a=>JSON.stringify((a||[]).map(x=>[x.file,x.from,x.to,x.label]));
+  (sharedCache||[]).forEach(it=>{ if(it.bad) return; const local=lib.songs.find(x=>x.src==='songs/'+it.file); if(!local) return;
+    const f=songFields(it.o), ss=songSig(f), sc=sharedClips(it.o);
+    if(local.srcSig===ss&&songSig(local)===ss&&aSig(clipsOf(local).filter(c=>c.src==='shared'))===aSig(sc)) return;
+    Object.assign(local,f,{srcText:f.text,srcSig:ss}); local.clips=[...clipsOf(local).filter(c=>c.src==='local'),...sc]; PCACHE.delete(local.id); done.push(f.title); });
+  if(done.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden) renderCards(); toast('已更新到團內曲庫的最新版：'+done.join('、')); }
+}
+function toast(t){ let el=$('toast'); if(!el){ el=document.createElement('div'); el.id='toast'; el.setAttribute('role','status'); document.body.append(el); } el.textContent=t; el.classList.add('on'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),6000); }
 function renderShared(){
   linkShared();
   const box=$('sharedList'); box.innerHTML='';
@@ -3162,7 +3174,7 @@ function applyRole(r,first){
   ROLE=r; document.body.classList.toggle('role-member',r==='member'); document.body.classList.toggle('role-admin',r==='admin');
   $('roleBtn').textContent=r==='admin'?'管理員 · 切換身份':'團員 · 切換身份';
   $('roleGate').hidden=true;
-  if(r==='member'){ if(REV.on) endReview(); setTab(first&&prefs.tab==='export'?'export':'practice'); }
+  if(r==='member'){ if(REV.on) endReview(); setTab(first&&prefs.tab==='export'?'export':'practice'); if(lib.songs.some(x=>x.src)&&!sharedCache) loadShared(); }
   else setTab(first&&['import','edit','practice','export'].includes(prefs.tab)?prefs.tab:'import');
 }
 function showGate(){ $('roleGate').hidden=false; $('gatePick').hidden=false; $('gatePass').hidden=true; $('gateErr').textContent=''; stopAll(); }
