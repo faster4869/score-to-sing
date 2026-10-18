@@ -360,7 +360,8 @@ body.role-member #myPanel{display:none}
         <p class="note">選擇要匯入的聲部（會建立一首新曲子）：</p>
         <div id="xmlParts" class="xml-parts"></div>
         <div class="row">
-          <label class="field" id="xmlVerseWrap" hidden>歌詞 <select id="xmlVerse"></select></label>
+          <label class="field" title="兩部共用一行歌詞時，歌詞常常只寫在其中一部底下">歌詞取自 <select id="xmlLyrFrom"></select></label>
+          <label class="field" id="xmlVerseWrap" hidden>第幾段 <select id="xmlVerse"></select></label>
           <label class="field" title="同一個聲部同時有兩個音（分部）時，要取哪一個">分部時取 <select id="xmlChord"><option value="top">上方的音</option><option value="bottom">下方的音</option></select></label>
         </div>
         <div class="row">
@@ -2279,7 +2280,7 @@ function xmlToSong(doc,sel,opts){
         const st=kidText(el,'staff')||'1', v=kidText(el,'voice')||'1';
         if(st!==sel.staff||v!==sel.voice) return;
         const rest=kid(el,'rest');
-        const ev={onset,dur,rest:!!rest,type:kidText(el,'type'),dots:kids(el,'dot').length,chord};
+        const ev={onset,q:onset/div,dur,rest:!!rest,type:kidText(el,'type'),dots:kids(el,'dot').length,chord};
         const tm=kid(el,'time-modification'); if(tm&&kidText(tm,'actual-notes')==='3'&&kidText(tm,'normal-notes')==='2') ev.trip=true;
         if(rest&&rest.getAttribute('measure')==='yes') ev.whole=true;
         if(!rest){ const p=kid(el,'pitch'); if(!p) return;
@@ -2301,6 +2302,11 @@ function xmlToSong(doc,sel,opts){
     const num=m.getAttribute('number'); const n=/^\d+$/.test(num)?+num:null;
     measures.push({len:maxT/div,list,num:n});
   });
+  if(opts.lyricMapOnly){ const mp=new Map(); measures.forEach((M,mi)=>M.list.forEach(e=>{ if(e.lyric) mp.set(mi+':'+e.q.toFixed(3),e.lyric); })); return mp; }
+  // lyrics written only under another part (e.g. two parts sharing one lyric line): borrow by timing
+  if(opts.borrow){ const mp=xmlToSong(doc,opts.borrow,{verse:opts.borrowVerse||verse,chord:'top',lyricMapOnly:true});
+    let prev=null; measures.forEach((M,mi)=>{ M.list.forEach(e=>{ if(e.rest){ prev=null; return; } const cont=e.tieStop&&prev&&prev.tieStart&&prev.midi===e.midi;
+      if(!e.lyric&&!cont){ const l=mp.get(mi+':'+e.q.toFixed(3)); if(l) e.lyric=l; } prev=e; }); }); }
   if(key===null) key=0;
   // ---- write our text format
   const lines=[]; let anyLyric=false; let prevTok=null; let prevSung=false;
@@ -2361,19 +2367,29 @@ function renderXmlBox(){
     row.innerHTML=`<input type="radio" name="xmlVoice" id="${id}" value="${i}" ${i===0?'checked':''}><span class="sh-title">${esc(v.label)}</span><span class="sh-meta">${v.notes} 個音${v.lyrics?' · 有歌詞':''}${v.verses.length>1?' · '+v.verses.length+' 段歌詞':''}</span>`;
     list.append(row);
   });
-  list.onchange=()=>{ syncXmlVerse(); syncXmlName(); }; syncXmlVerse(); syncXmlName();
+  list.onchange=()=>{ syncXmlLyrFrom(); syncXmlVerse(); syncXmlName(); }; $('xmlLyrFrom').onchange=syncXmlVerse; syncXmlLyrFrom(); syncXmlVerse(); syncXmlName();
 }
 function xmlTitleFor(v){ const d=XML.doc; const t=d.querySelector('work > work-title')?.textContent.trim()||d.querySelector('movement-title')?.textContent.trim()||(XML.name||'').replace(/\.[^.]+$/,''); return (t?t+' – ':'')+v.label; }
 function syncXmlName(){ const v=XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0]; $('xmlName').value=xmlTitleFor(v); }
+function xmlSelVoice(){ return XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0]; }
+function syncXmlLyrFrom(){
+  const v=xmlSelVoice(); const sel=$('xmlLyrFrom'); sel.innerHTML='';
+  const own=document.createElement('option'); own.value='-1'; own.textContent=v.lyrics?`自己的歌詞（${v.lyrics} 個字）`:'自己的歌詞（沒有）'; sel.append(own);
+  let best=-1, bestN=0;
+  XML.voices.forEach((o,i)=>{ if(o===v||!o.lyrics) return; const op=document.createElement('option'); op.value=i; op.textContent=`跟著「${o.label}」的歌詞（${o.lyrics} 個字）`; sel.append(op); if(o.lyrics>bestN){ bestN=o.lyrics; best=i; } });
+  // own lyrics missing or much sparser than the notes → default to borrowing from the part that has them
+  sel.value=(best>=0&&v.lyrics<v.notes*0.5&&bestN>v.lyrics*2)?String(best):'-1';
+}
 function syncXmlVerse(){
-  const v=XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0]; const sel=$('xmlVerse'); sel.innerHTML='';
+  const lf=+$('xmlLyrFrom').value; const v=lf>=0?XML.voices[lf]:xmlSelVoice(); const sel=$('xmlVerse'); sel.innerHTML='';
   (v.verses.length?v.verses:['1']).forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=`第 ${n} 段`; sel.append(o); });
   $('xmlVerseWrap').hidden=v.verses.length<2;
 }
 $('xmlGo').onclick=()=>{
   if(!XML) return; const v=XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0];
   try{
-    const r=xmlToSong(XML.doc,v,{verse:$('xmlVerse').value,chord:$('xmlChord').value});
+    const lf=+$('xmlLyrFrom').value; const bv=lf>=0?XML.voices[lf]:null;
+    const r=xmlToSong(XML.doc,v,bv?{verse:(v.verses[0]||'1'),chord:$('xmlChord').value,borrow:bv,borrowVerse:$('xmlVerse').value}:{verse:$('xmlVerse').value,chord:$('xmlChord').value});
     const s=newSong({title:$('xmlName').value.trim()||r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
     lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong(); syncKeySel();
     $('xmlBox').hidden=true; XML=null;
