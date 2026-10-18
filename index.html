@@ -244,6 +244,7 @@ body.role-member #myPanel{display:none}
 .mini .btn.on{background:var(--hot,#d93a2b);color:#1a1a1a;border-color:transparent}
 .card .order .btn{padding:0 6px;font-size:10px;line-height:16px}
 .mixer{flex-basis:100%}
+.xml-more summary{cursor:pointer;color:var(--muted);font-size:13px;margin:4px 0}
 .mixer summary{cursor:pointer;color:var(--muted);font-size:14px}
 .mix-rows{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .mix-row{display:grid;grid-template-columns:minmax(7em,15em) minmax(110px,240px) 3.6em auto;align-items:center;gap:10px;justify-content:start}
@@ -1151,7 +1152,7 @@ function renderShared(){
 }
 
 $('sharedReload').onclick=loadShared;
-function exportText(sg){ const s=sg||song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,parts:(s.parts||[]).map(({label,text,clef,startBar})=>({label,text,clef,startBar})),practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
+function exportText(sg){ const s=sg||song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,parts:(s.parts||[]).map(({label,group,text,clef,startBar})=>({label,group,text,clef,startBar})),practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
 function fileNameOf(sg){ return (sg.title||'song').replace(/[\\/:*?"<>|]/g,'_').trim()+'.json'; }
 function downloadSong(sg){ const blob=new Blob([exportText(sg)],{type:'application/json'}); const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=fileNameOf(sg); document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500); }
@@ -1260,7 +1261,7 @@ $('expSel').onclick=async()=>{ const list=lib.songs.filter(x=>EXP_SEL.has(x.id))
 function songFields(o){
   return {title:String(o.title||'匯入的曲子'),clef:['treble','treble8','bass'].includes(o.clef)?o.clef:'bass',key:Math.max(-7,Math.min(7,+o.key||0)),bpm:+o.bpm||80,
     startBar:Number.isFinite(+o.startBar)?+o.startBar:1,ttsLang:TTS_LANGS[o.ttsLang]?o.ttsLang:'ja-JP',text:o.text,
-    parts:(Array.isArray(o.parts)?o.parts:[]).filter(p=>p&&typeof p.text==='string').map((p,i)=>({id:'p'+i,label:String(p.label||('聲部 '+(i+1))),text:p.text,clef:['treble','treble8','bass'].includes(p.clef)?p.clef:undefined,startBar:Number.isFinite(+p.startBar)?+p.startBar:undefined}))};
+    parts:(Array.isArray(o.parts)?o.parts:[]).filter(p=>p&&typeof p.text==='string').map((p,i)=>({id:'p'+i,label:String(p.label||('聲部 '+(i+1))),group:p.group?String(p.group):undefined,text:p.text,clef:['treble','treble8','bass'].includes(p.clef)?p.clef:undefined,startBar:Number.isFinite(+p.startBar)?+p.startBar:undefined}))};
 }
 const filePractices=o=>(o.practices||[]).map(p=>({id:uid(),name:String(p.name||'練習'),from:+p.from||1,to:+p.to||+p.from||1}));
 function importData(txt){
@@ -2251,10 +2252,13 @@ function xmlVoices(doc){
     });
     const list=[...combos.values()].filter(c=>c.notes>0).sort((a,b)=>a.staff-b.staff||a.voice-b.voice);
     const staves=new Set(list.map(c=>c.staff)).size;
+    // a "voice" with only a handful of notes is just a few divisi notes, not a real part
+    const top=Math.max(...list.map(c=>c.notes)); list.forEach(c=>c.minor=c.notes<Math.max(20,top*0.1));
+    const main=list.filter(c=>!c.minor);
     list.forEach(c=>{
-      let label=names[pid]||pid;
-      if(list.length>1){ const bits=[]; if(staves>1) bits.push(`第 ${c.staff} 譜表`); bits.push(`聲部 ${c.voice}`); label+=`（${bits.join('、')}）`; }
-      out.push({pid,label,staff:c.staff,voice:c.voice,notes:c.notes,lyrics:c.lyrics,verses:[...c.verses].sort(),clef:clefs[c.staff]||clefs['1']||null});
+      const name=names[pid]||pid; let label=name;
+      if(c.minor||main.length>1){ const bits=[]; if(staves>1) bits.push(`第 ${c.staff} 譜表`); bits.push(c.minor?`零星的分部音`:`聲部 ${c.voice}`); label+=`（${bits.join('、')}）`; }
+      out.push({pid,name,minor:c.minor,label,staff:c.staff,voice:c.voice,notes:c.notes,lyrics:c.lyrics,verses:[...c.verses].sort(),clef:clefs[c.staff]||clefs['1']||null});
     });
   });
   return out;
@@ -2380,11 +2384,13 @@ $('xmlFile').onchange=async e=>{
 };
 function renderXmlBox(){
   const box=$('xmlBox'); box.hidden=false; const list=$('xmlParts'); list.innerHTML='';
+  const first=Math.max(0,XML.voices.findIndex(v=>!v.minor)); let more=null;
   XML.voices.forEach((v,i)=>{
     const id='xv'+i; const row=document.createElement('label'); row.className='xml-part'; row.htmlFor=id;
-    row.innerHTML=`<input type="radio" name="xmlVoice" id="${id}" value="${i}" ${i===0?'checked':''}><span class="sh-title">${esc(v.label)}</span><span class="sh-meta">${v.notes} 個音${v.lyrics?' · 有歌詞':''}${v.verses.length>1?' · '+v.verses.length+' 段歌詞':''}</span>`;
-    list.append(row);
+    row.innerHTML=`<input type="radio" name="xmlVoice" id="${id}" value="${i}" ${i===first?'checked':''}><span class="sh-title">${esc(v.label)}</span><span class="sh-meta">${v.notes} 個音${v.lyrics?' · 有歌詞':''}${v.verses.length>1?' · '+v.verses.length+' 段歌詞':''}</span>`;
+    if(v.minor){ if(!more){ more=document.createElement('details'); more.className='xml-more'; more.innerHTML='<summary></summary>'; } more.append(row); } else list.append(row);
   });
+  if(more){ const n=more.querySelectorAll('.xml-part').length; more.querySelector('summary').textContent=`還有 ${n} 個零星的分部音（通常不用選，練唱時會跟主聲部一起播放）`; list.append(more); }
   list.onchange=()=>{ syncXmlLyrFrom(); syncXmlVerse(); syncXmlName(); }; $('xmlLyrFrom').onchange=syncXmlVerse; syncXmlLyrFrom(); syncXmlVerse(); syncXmlName();
 }
 function xmlTitleFor(v){ const d=XML.doc; const t=d.querySelector('work > work-title')?.textContent.trim()||d.querySelector('movement-title')?.textContent.trim()||(XML.name||'').replace(/\.[^.]+$/,''); return (t?t+' – ':'')+v.label; }
@@ -2408,7 +2414,7 @@ $('xmlGo').onclick=()=>{
   try{
     const lf=+$('xmlLyrFrom').value; const bv=lf>=0?XML.voices[lf]:null;
     const r=xmlToSong(XML.doc,v,bv?{verse:(v.verses[0]||'1'),chord:$('xmlChord').value,borrow:bv,borrowVerse:$('xmlVerse').value}:{verse:$('xmlVerse').value,chord:$('xmlChord').value});
-    const parts=[]; XML.voices.forEach(o=>{ if(o===v||o.notes<8) return; try{ const pr=xmlToSong(XML.doc,o,{verse:o.verses[0]||'1',chord:$('xmlChord').value}); parts.push({id:'p'+parts.length,label:o.label,text:pr.text.split('\n').filter(l=>/\|/.test(l)||/^\s*@/.test(l)).join('\n'),clef:pr.clef,startBar:pr.startBar}); }catch(e){} });
+    const parts=[]; XML.voices.forEach(o=>{ if(o===v||o.notes<8) return; try{ const pr=xmlToSong(XML.doc,o,{verse:o.verses[0]||'1',chord:$('xmlChord').value}); parts.push({id:'p'+parts.length,label:o.label,group:o.name===v.name?v.name+'（分部音）':o.name,text:pr.text.split('\n').filter(l=>/\|/.test(l)||/^\s*@/.test(l)).join('\n'),clef:pr.clef,startBar:pr.startBar}); }catch(e){} });
     const s=newSong({parts,title:$('xmlName').value.trim()||r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
     lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong(); syncKeySel();
     $('xmlBox').hidden=true; XML=null;
@@ -3172,15 +3178,17 @@ function practiceSeg(pr,card){
   const items=ev.map((e,i)=>({...e,start:e.start-t0,cont:i===0?false:e.cont}));
   const endB=Q.bars[to]&&Q.bars[to].end!=null?Q.bars[to].end-t0:Math.max(...items.map(x=>x.start+x.dur));
   const mix=pr.mix||{}; const layers=[];
-  layerList(pr,sg).forEach(L=>{ const v=+(mix[L.key]||0); if(v<=0) return; const its=cutItems(parsedOf(L.src()),from,to); if(its) layers.push({key:L.key,vol:v,items:its}); });
+  layerList(pr,sg).forEach(L=>{ const v=+(mix[L.key]||0); if(v<=0) return; const its=L.srcs.flatMap(f=>cutItems(parsedOf(f()),from,to)||[]); if(its.length) layers.push({key:L.key,vol:v,items:its}); });
   return {items,beats:endB,card,song:sg,layers,ownVol:mix.own!==undefined?+mix.own:100,opt:{speed:pr.speed||100,trans:pr.trans||0,timbre:pr.timbre||'piano',loop:!!pr.loop},lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
 }
 function partSong(sg,pt){ return {id:sg.id+'#'+pt.id,text:pt.text||'',key:sg.key,clef:pt.clef||sg.clef,startBar:pt.startBar!==undefined?pt.startBar:sg.startBar}; }
 function cutItems(Q,from,to){ const ev=Q.events.filter(e=>e.bar>=from&&e.bar<=to); if(!ev.length) return null;
   const t0=Q.bars[from]&&Q.bars[from].start!=null?Math.min(Q.bars[from].start,ev[0].start):ev[0].start;
   return ev.map((e,i)=>({...e,start:e.start-t0,cont:i===0?false:e.cont})); }
-function layerList(pr,sg){ const out=[]; (sg.parts||[]).forEach(pt=>out.push({key:'p:'+pt.id,label:pt.label,src:()=>partSong(sg,pt)}));
-  Object.keys(pr.mix||{}).filter(k=>k.startsWith('s:')).forEach(k=>{ const o=songById(k.slice(2)); if(o&&o.id!==sg.id) out.push({key:k,label:o.title,src:()=>o,extra:true}); });
+function layerList(pr,sg){ const out=[]; const byG=new Map();
+  const own=(sg.title||'').split(' – ').pop().replace(/（[^（）]*）$/,'');
+  (sg.parts||[]).forEach(pt=>{ let g=pt.group||String(pt.label||'').replace(/（[^（）]*）$/,''); if(!pt.group&&g===own) g+='（分部音）'; if(!byG.has(g)){ const L={key:'g:'+g,label:g,srcs:[]}; byG.set(g,L); out.push(L); } byG.get(g).srcs.push(()=>partSong(sg,pt)); });
+  Object.keys(pr.mix||{}).filter(k=>k.startsWith('s:')).forEach(k=>{ const o=songById(k.slice(2)); if(o&&o.id!==sg.id) out.push({key:k,label:o.title,srcs:[()=>o],extra:true}); });
   return out; }
 function songRange(sg){ const Q=parsedOf(sg); return Q.barNums.length?[Q.barNums[0],Q.barNums[Q.barNums.length-1]]:null; }
 function renderPractice(){ renderCards(); }
@@ -3215,7 +3223,7 @@ function practiceCard(pr){
       <label class="field">移調 <select class="o-trans">${TRANS_OPTS}</select></label>
       <div class="field">音色 <div class="seg o-timbre"><button type="button" data-v="piano">鋼琴</button><button type="button" data-v="voice">人聲</button><button type="button" data-v="sing" title="母音跟著歌詞變化的哼唱">哼唱</button></div></div>
       <label class="field"><input class="o-loop" type="checkbox"${pr.loop?' checked':''}>反覆</label>
-      <details class="mixer"${Object.values(pr.mix||{}).some(v=>v>0&&v!==100)?' open':''}><summary>聲部音量${(sg.parts||[]).length?`（還有 ${(sg.parts||[]).length} 個聲部）`:''}</summary><div class="mix-rows"></div></details>
+      <details class="mixer"${Object.values(pr.mix||{}).some(v=>v>0&&v!==100)?' open':''}><summary>聲部音量${layerList(pr,sg).length?`（還有 ${layerList(pr,sg).length} 個聲部可以一起播）`:''}</summary><div class="mix-rows"></div></details>
     </div>
     <div class="roll-scroll"><div class="roll"></div></div>`;
   card.querySelector('.o-trans').value=pr.trans||0;
