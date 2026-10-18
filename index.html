@@ -230,6 +230,7 @@ summary{cursor:pointer;font-weight:500}
 body.role-member #tabBtn-import,body.role-member #tabBtn-edit{display:none}
 body.role-member .exp-bar,body.role-member .exp-row input[type=checkbox],body.role-member .exp-row [data-act=dl],body.role-member .exp-row [data-act=copy],body.role-member .exp-note,body.role-member .exp-hint{display:none}
 body.role-member #sharedPanel{order:-1}
+body.role-member #myPanel{display:none}
 .exp-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}
 .exp-row{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--sunk)}
 .exp-pick{display:flex;align-items:center;gap:10px;flex:1 1 18em;min-width:0}
@@ -625,7 +626,7 @@ body.role-member #sharedPanel{order:-1}
 
   <!-- ============ 匯出 ============ -->
   <section id="tab-export" role="tabpanel" aria-labelledby="tabBtn-export" hidden style="display:none;flex-direction:column;gap:16px">
-    <section class="panel" aria-label="匯出曲子">
+    <section class="panel" id="myPanel" aria-label="我的曲子">
       <div class="row" style="justify-content:space-between">
         <h2 class="qe-title">我的曲子</h2>
         <span class="note exp-hint">可以改曲名、匯出或刪除。每首存成一個 .json 檔，放進 GitHub 的 <code>songs/</code> 資料夾，就會出現在團內曲庫</span>
@@ -1012,13 +1013,14 @@ function ghRepo(){
   const owner=h.split('.')[0]; const seg=location.pathname.split('/').filter(Boolean)[0];
   return {owner,repo:seg&&!/\.html?$/i.test(seg)?seg:h};
 }
+const SHARED_RAW={};
 async function listShared(){
   // 1) songs/index.json if present (["a.json", ...] or {songs:[...]}), 2) GitHub's folder listing
   try{ const r=await fetch('songs/index.json',{cache:'no-cache'});
     if(r.ok){ const j=await r.json(); const a=(Array.isArray(j)?j:(j.songs||[])).map(x=>typeof x==='string'?x:x&&x.file).filter(Boolean); if(a.length) return a; } }catch(e){}
   const gh=ghRepo();
   if(gh){ try{ const r=await fetch(`https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/songs`,{cache:'no-cache'});
-    if(r.ok){ const j=await r.json(); if(Array.isArray(j)) return j.filter(x=>x.type==='file'&&/\.json$/i.test(x.name)&&x.name!=='index.json').map(x=>x.name); }
+    if(r.ok){ const j=await r.json(); if(Array.isArray(j)){ const fs=j.filter(x=>x.type==='file'&&/\.json$/i.test(x.name)&&x.name!=='index.json'); fs.forEach(x=>{ if(x.download_url) SHARED_RAW[x.name]=x.download_url; }); return fs.map(x=>x.name); } }
     else if(r.status===403) throw new Error('rate'); }catch(e){ if(e.message==='rate') return 'rate'; } }
   return null;
 }
@@ -1027,24 +1029,30 @@ async function loadShared(){
   const files=await listShared();
   if(files==='rate'){ $('sharedMsg').textContent='GitHub 暫時限制查詢次數，請過幾分鐘再按「重新整理」'; return; }
   if(!files||!files.length){ $('sharedMsg').textContent=''; box.innerHTML='<div class="empty-state">找不到曲庫。把 .json 檔放進網站的 <code>songs/</code> 資料夾，就會出現在這裡（在本機或預覽中打開時不會有）。</div>'; return; }
-  const got=await Promise.all(files.map(async f=>{ try{ const r=await fetch('songs/'+encodeURIComponent(f).replace(/%2F/g,'/'),{cache:'no-cache'}); if(!r.ok) throw 0; const o=await r.json(); if(!o||typeof o.text!=='string') throw 0; return {file:f,o}; }catch(e){ return {file:f,bad:true}; } }));
+  const got=await Promise.all(files.map(async f=>{
+    let r=null; try{ r=await fetch('songs/'+encodeURIComponent(f).replace(/%2F/g,'/'),{cache:'no-cache'}); }catch(e){}
+    // the site may not be redeployed yet: read the file straight from the repository
+    if((!r||!r.ok)&&SHARED_RAW[f]) try{ r=await fetch(SHARED_RAW[f],{cache:'no-cache'}); }catch(e){}
+    if(!r||!r.ok) return {file:f,bad:true,why:'網站還沒更新到這個檔案，請過 1～2 分鐘再按「重新整理」'};
+    try{ const o=JSON.parse(await r.text()); if(!o||typeof o.text!=='string') throw 0; return {file:f,o}; }catch(e){ return {file:f,bad:true,why:'檔案格式不對，無法讀取'}; } }));
   sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; renderShared();
 }
 function renderShared(){
   const box=$('sharedList'); box.innerHTML='';
   (sharedCache||[]).forEach(it=>{
     const row=document.createElement('div'); row.className='sh-row';
-    if(it.bad){ row.innerHTML=`<span class="sh-title">${esc(it.file)}</span><span class="sh-state">檔案格式不對，無法讀取</span>`; box.append(row); return; }
+    if(it.bad){ row.innerHTML=`<span class="sh-title">${esc(it.file)}</span><span class="sh-state">${esc(it.why||'檔案格式不對，無法讀取')}</span>`; box.append(row); return; }
     const src='songs/'+it.file, f=songFields(it.o), local=lib.songs.find(s=>s.src===src);
     const aSig=o=>JSON.stringify((o||[]).map(a=>a.file)); const same=local&&local.srcText===f.text&&local.key===f.key&&local.clef===f.clef&&aSig(clipsOf(local).filter(c=>c.src==='shared'))===aSig(sharedClips(it.o));
     const state=!local?'':same?'已在你的曲子裡':'有新版本';
     const bars=(f.text.match(/\|/g)||[]).length;
     row.innerHTML=`<span class="sh-title">${esc(f.title)}</span><span class="sh-meta">${bars} 小節 · ♩=${f.bpm}</span><span class="sh-state${state==='有新版本'?' new':''}">${state}</span>
-      <button class="btn${local?'':' primary'}" type="button">${!local?'載入':same?'開啟':'更新'}</button>`;
+      <button class="btn${local?'':' primary'}" type="button">${!local?'載入':same?'開啟':'更新'}</button>${local?'<button class="btn danger sh-rm" type="button" title="從你的曲子裡移除（不影響團內曲庫）">移除</button>':''}`;
     const btn=row.querySelector('button'); let armed=false;
+    const rm=row.querySelector('.sh-rm'); if(rm){ let a2=null; rm.onclick=()=>{ if(!a2){ rm.textContent='再按一次移除'; a2=setTimeout(()=>{a2=null;rm.textContent='移除';},3000); return; } clearTimeout(a2); deleteSong(local.id); renderShared(); renderExport(); $('sharedMsg').textContent=`已移除「${f.title}」`; }; }
     btn.onclick=()=>{
       if(!local){ const s=newSong({...f,practices:filePractices(it.o),clips:sharedClips(it.o),src,srcText:f.text}); lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); }
-      else if(same){ lib.current=local.id; }
+      else if(same){ lib.current=local.id; setTab('practice'); const c=[...document.querySelectorAll('#plist .card')].find(x=>x.querySelector('.psong')&&x.querySelector('.psong').value===local.id); if(c) c.scrollIntoView({block:'center'}); return; }
       else{
         if(!armed&&local.text!==local.srcText){ armed=true; btn.textContent='會覆蓋你在本機的修改，再按一次'; return; }
         Object.assign(local,f,{srcText:f.text}); if(!local.practices.length) local.practices=filePractices(it.o); if(!lib.plan.some(p=>p.songId===local.id)) planAdd(local,filePractices(it.o));
