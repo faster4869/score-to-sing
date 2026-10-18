@@ -212,6 +212,9 @@ summary{cursor:pointer;font-weight:500}
 .card-head{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap}
 .play{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;flex:none}
 .play svg{width:16px;height:16px;fill:currentColor}
+.card.active .play{background:var(--hot,#d93a2b)}
+.psong{max-width:14em;min-width:0}
+.btn.sm{padding:3px 8px;font-size:12px}
 .pname{font:500 16px/1.3 var(--jp);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 6px;min-width:6em;flex:1;max-width:18em}
 .pname:hover,.pname:focus{border-color:var(--line);background:var(--sunk)}
 .range{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
@@ -580,20 +583,16 @@ summary{cursor:pointer;font-weight:500}
       <div class="field">音色
         <div class="seg" id="timbre">
           <button type="button" data-v="piano" aria-pressed="true">鋼琴</button>
-          <button type="button" data-v="voice" aria-pressed="false">人聲 a</button>
+          <button type="button" data-v="voice" aria-pressed="false">人聲</button>
           <button type="button" data-v="sing" aria-pressed="false" title="母音跟著歌詞變化的哼唱">哼唱</button>
         </div></div>
       <label class="field"><input id="countin" type="checkbox" checked>預備拍</label>
       <label class="field"><input id="loop" type="checkbox">反覆</label>
       <label class="field" title="拉寬可以讓歌詞和音名不擠在一起">小節寬度 <input id="pxBeat" type="range" min="40" max="160" step="10"></label>
-      <div class="actions">
-        <button class="btn" id="playWhole" type="button">▶ 整首</button>
-        <button class="btn" id="stop" type="button">停止</button>
-      </div>
     </div>
     <section class="panel" id="guidePanel" aria-label="導讀錄音">
       <div class="row" style="justify-content:space-between">
-        <h3 class="qe-title">導讀錄音</h3>
+        <h3 class="qe-title">導讀錄音 <span class="note" id="guideSong"></span></h3>
         <span class="note" id="guideMsg" aria-live="polite"></span>
       </div>
       <div id="guideList" class="guide-list"></div>
@@ -647,11 +646,17 @@ let prefs={pxBeat:70,bpl:4,scoreH:0,theme:'auto',tab:'import',trans:0,timbre:'pi
     lib.current=lib.songs[0].id;
   }
   if(!lib.songs.some(s=>s.id===lib.current)) lib.current=lib.songs[0].id;
+  if(!Array.isArray(lib.plan)){ lib.plan=[]; lib.songs.forEach(s=>(s.practices||[]).forEach(p=>lib.plan.push({id:p.id||uid(),songId:s.id,name:p.name,from:p.from,to:p.to}))); }
 })();
+function planAdd(s,prs){ (prs||[]).forEach(p=>lib.plan.push({id:uid(),songId:s.id,name:p.name,from:p.from,to:p.to})); }
 let saveT;
 function saveLib(now){ clearTimeout(saveT); const f=()=>{try{localStorage.setItem(STORE_LIB,JSON.stringify(lib));}catch(e){}}; if(now) f(); else saveT=setTimeout(f,300); }
 function savePrefs(){try{localStorage.setItem(STORE_PREF,JSON.stringify(prefs));}catch(e){}}
 const song=()=>lib.songs.find(s=>s.id===lib.current)||lib.songs[0];
+const songById=id=>lib.songs.find(s=>s.id===id);
+const PCACHE=new Map();
+function parsedOf(s){ if(s===song()&&typeof P!=='undefined'&&P) return P; const k=[s.text,s.key,s.clef,s.startBar].join('\u0001'); const c=PCACHE.get(s.id); if(c&&c.k===k) return c.P; const v=parseSong(s); PCACHE.set(s.id,{k,P:v}); return v; }
+let PLAY_SONG=null;
 
 /* ================= music basics ================= */
 const STEPS={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
@@ -835,15 +840,17 @@ function click(t,accent){
   o.connect(g).connect(master); g.gain.setValueAtTime(.3,t); g.gain.exponentialRampToValueAtTime(.001,t+.06);
   o.start(t); o.stop(t+.08); track(o);
 }
-const bpmNow=()=>Math.max(20,(+song().bpm||80)*prefs.speed/100);
+const bpmNow=()=>Math.max(20,(+(PLAY_SONG||song()).bpm||80)*prefs.speed/100);
 let play=null;
 function stopAll(){
   if(typeof stopGuide==='function') stopGuide();
-  if(play){cancelAnimationFrame(play.raf); play=null;}
+  if(play){cancelAnimationFrame(play.raf); play=null;} PLAY_SONG=null;
   live.forEach(n=>{try{n.stop();}catch(e){}}); live.clear();
   document.querySelectorAll('.col.on,#staff g.on').forEach(e=>e.classList.remove('on'));
   document.querySelectorAll('.card.playing').forEach(e=>e.classList.remove('playing'));
+  document.querySelectorAll('.card.active').forEach(e=>{ e.classList.remove('active'); const b=e.querySelector('.play'); if(b){ b.innerHTML=PLAY_ICON; b.setAttribute('aria-label','播放'); } });
 }
+const PLAY_ICON='<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>', STOP_ICON='<svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>';
 function schedule(list,t0,withCount){
   const spb=60/bpmNow(); let t=t0; const timeline=[];
   if(withCount){for(let i=0;i<4;i++)click(t+i*spb,i===0); t+=4*spb;}
@@ -867,6 +874,7 @@ function playList(list,withCount=prefs.countin){
   stopAll(); ensureCtx();
   const good=list.filter(s=>s&&s.items.some(x=>!x.rest));
   if(!good.length) return;
+  PLAY_SONG=good[0].song||null;
   const sch=schedule(good,ctx.currentTime+.08,withCount);
   play={list:good,...sch,raf:0};
   const tick=()=>{
@@ -899,8 +907,8 @@ const TTS_LANGS={'ja-JP':'日文','zh-TW':'中文','en-US':'英文','hak-TW':'�
 // ecclesiastical Latin spelled so an Italian voice reads it the church way
 function latinForItalian(t){ return t.toLowerCase().replace(/æ|ae/g,'e').replace(/œ|oe/g,'e').replace(/([^stx])ti(?=[aeiou])/g,'$1zi').replace(/^ti(?=[aeiou])/,'zi').replace(/j/g,'i').replace(/y/g,'i').replace(/\bh/g,'').replace(/xc(?=[ei])/g,'ksc'); }
 /* returns '' when it spoke, otherwise a short reason to show the person */
-function speak(items){
-  const pick=song().ttsLang||'ja-JP';
+function speak(items,sg){
+  const pick=(sg||song()).ttsLang||'ja-JP';
   if(pick==='off') return '這首曲子設定為不念歌詞';
   const lang=pick==='la'?'it-IT':pick;
   try{
@@ -934,7 +942,7 @@ $('songDel').onclick=()=>{
   if(!delArmed){ b.textContent='再按一次確認刪除'; delArmed=setTimeout(()=>{delArmed=null;b.textContent='刪除這首';},3000); return; }
   clearTimeout(delArmed); delArmed=null; b.textContent='刪除這首'; stopAll();
   clipsOf(song()).filter(c=>c.src==='local').forEach(c=>AudioDB.del(c.id).catch(()=>{}));
-  lib.songs=lib.songs.filter(s=>s.id!==lib.current);
+  lib.songs=lib.songs.filter(s=>s.id!==lib.current); lib.plan=lib.plan.filter(p=>p.songId!==lib.current);
   if(!lib.songs.length) lib.songs.push(newSong());
   lib.current=lib.songs[0].id; saveLib(true); loadSong();
 };
@@ -976,11 +984,11 @@ function renderShared(){
       <button class="btn${local?'':' primary'}" type="button">${!local?'載入':same?'開啟':'更新'}</button>`;
     const btn=row.querySelector('button'); let armed=false;
     btn.onclick=()=>{
-      if(!local){ const s=newSong({...f,practices:filePractices(it.o),clips:sharedClips(it.o),src,srcText:f.text}); lib.songs.push(s); lib.current=s.id; }
+      if(!local){ const s=newSong({...f,practices:filePractices(it.o),clips:sharedClips(it.o),src,srcText:f.text}); lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); }
       else if(same){ lib.current=local.id; }
       else{
         if(!armed&&local.text!==local.srcText){ armed=true; btn.textContent='會覆蓋你在本機的修改，再按一次'; return; }
-        Object.assign(local,f,{srcText:f.text}); if(!local.practices.length) local.practices=filePractices(it.o);
+        Object.assign(local,f,{srcText:f.text}); if(!local.practices.length) local.practices=filePractices(it.o); if(!lib.plan.some(p=>p.songId===local.id)) planAdd(local,filePractices(it.o));
         local.clips=[...clipsOf(local).filter(c=>c.src==='local'),...sharedClips(it.o)]; lib.current=local.id;
       }
       saveLib(true); stopAll(); loadSong(); renderShared(); $('sharedMsg').textContent=`已開啟「${f.title}」`;
@@ -991,7 +999,7 @@ function renderShared(){
 $('songShared').onclick=()=>{ const p=$('sharedPanel'); p.hidden=!p.hidden; $('songShared').setAttribute('aria-pressed',!p.hidden); if(!p.hidden&&!sharedCache) loadShared(); };
 $('sharedReload').onclick=loadShared;
 $('songIO').onclick=()=>{ const p=$('ioPanel'); p.hidden=!p.hidden; $('songIO').setAttribute('aria-pressed',!p.hidden); };
-function exportText(){ const s=song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,practices:s.practices.map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
+function exportText(){ const s=song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
 $('expDownload').onclick=()=>{
   try{ const blob=new Blob([exportText()],{type:'application/json'}); const a=document.createElement('a');
     a.href=URL.createObjectURL(blob); a.download=(song().title||'song').replace(/[\\/:*?"<>|]/g,'_')+'.json';
@@ -1019,7 +1027,7 @@ function importData(txt){
     s=newSong({title:'匯入的樂譜文字',text:txt});
   }
   if(lib.songs.some(x=>x.title===s.title)) s.title+='（匯入）';
-  lib.songs.push(s); lib.current=s.id; saveLib(true); stopAll(); loadSong();
+  lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong();
   return `已匯入「${s.title}」`;
 }
 $('impFile').onchange=e=>{
@@ -1762,9 +1770,9 @@ async function playClip(c,btn){
 }
 function clipRange(c){ const f=+c.from||0, t=+c.to||0; return f||t?`第 ${f||t}～${t||f} 小節`:'全曲'; }
 function clipsFor(pr){ const lo=Math.min(pr.from,pr.to), hi=Math.max(pr.from,pr.to);
-  return clipsOf(song()).filter(c=>{ const f=+c.from||0, t=+c.to||f; return f&&!(t<lo||f>hi); }); }
+  return clipsOf((pr.songId&&songById(pr.songId))||song()).filter(c=>{ const f=+c.from||0, t=+c.to||f; return f&&!(t<lo||f>hi); }); }
 function renderGuides(){
-  const box=$('guideList'); if(!box) return; box.innerHTML=''; const s=song(); const cl=clipsOf(s);
+  const box=$('guideList'); if(!box) return; if($('guideSong')) $('guideSong').textContent='（目前曲子：'+(song().title||'')+'）'; box.innerHTML=''; const s=song(); const cl=clipsOf(s);
   if(!cl.length){ box.innerHTML='<p class="note">還沒有導讀錄音。</p>'; return; }
   cl.forEach(c=>{
     const row=document.createElement('div'); row.className='g-row';
@@ -2137,7 +2145,7 @@ $('xmlGo').onclick=()=>{
   try{
     const r=xmlToSong(XML.doc,v,{verse:$('xmlVerse').value,chord:$('xmlChord').value});
     const s=newSong({title:r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
-    lib.songs.push(s); lib.current=s.id; saveLib(true); stopAll(); loadSong(); syncKeySel();
+    lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong(); syncKeySel();
     $('xmlBox').hidden=true; XML=null;
     impStatus(`已建立「${s.title}」：${r.bars} 小節${r.anyLyric?'，含歌詞':''}。反覆記號照譜面順序展開前的寫法匯入。`);
   }catch(err){ impStatus('轉換失敗：'+(err.message||err)); }
@@ -2888,29 +2896,33 @@ $('stripClear').onclick=async e=>{
 /* ================= practice tab ================= */
 const pxBeat=()=>prefs.pxBeat||70;
 function practiceSeg(pr,card){
+  const sg=songById(pr.songId)||song(); const Q=parsedOf(sg);
   const from=Math.min(pr.from,pr.to), to=Math.max(pr.from,pr.to);
-  const ev=P.events.filter(e=>e.bar>=from&&e.bar<=to);
+  const ev=Q.events.filter(e=>e.bar>=from&&e.bar<=to);
   if(!ev.length) return null;
-  const t0=P.bars[from]&&P.bars[from].start!=null?Math.min(P.bars[from].start,ev[0].start):ev[0].start;
+  const t0=Q.bars[from]&&Q.bars[from].start!=null?Math.min(Q.bars[from].start,ev[0].start):ev[0].start;
   const items=ev.map((e,i)=>({...e,start:e.start-t0,cont:i===0?false:e.cont}));
-  const endB=P.bars[to]&&P.bars[to].end!=null?P.bars[to].end-t0:Math.max(...items.map(x=>x.start+x.dur));
-  return {items,beats:endB,card,lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
+  const endB=Q.bars[to]&&Q.bars[to].end!=null?Q.bars[to].end-t0:Math.max(...items.map(x=>x.start+x.dur));
+  return {items,beats:endB,card,song:sg,lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
 }
+function songRange(sg){ const Q=parsedOf(sg); return Q.barNums.length?[Q.barNums[0],Q.barNums[Q.barNums.length-1]]:null; }
 function renderPractice(){ renderGuides(); renderCards(); }
 function renderCards(){
-  const s=song(); const list=$('plist'); list.innerHTML='';
-  if(!P.barNums.length){ list.innerHTML='<div class="empty-state">這首曲子還沒有音符。先到「打譜」分頁輸入，再回來建立練習。</div>'; $('barRange').textContent=''; return; }
-  const a=P.barNums[0], b=P.barNums[P.barNums.length-1];
-  $('barRange').textContent=`這首曲子是第 ${a}～${b} 小節`;
-  if(!s.practices.length) list.innerHTML='<div class="empty-state">還沒有練習。按「新增練習」，設定要練第幾小節到第幾小節。</div>';
-  s.practices.forEach(pr=>list.append(practiceCard(pr,a,b)));
+  const list=$('plist'); list.innerHTML='';
+  const before=lib.plan.length; lib.plan=lib.plan.filter(p=>songById(p.songId)); if(lib.plan.length!==before) saveLib();
+  $('barRange').textContent='每張卡片可以選不同的曲子，一個頁面就能練完所有曲目';
+  if(!lib.plan.length){ list.innerHTML='<div class="empty-state">還沒有練習。按「新增練習」，選好曲子和要練的小節。</div>'; return; }
+  lib.plan.forEach(pr=>list.append(practiceCard(pr)));
 }
-function practiceCard(pr,a,b){
+function practiceCard(pr){
   const card=document.createElement('article'); card.className='card';
+  const sg=songById(pr.songId); const rg=songRange(sg)||[1,1]; const [a,b]=rg;
+  const opts=lib.songs.map(x=>`<option value="${x.id}"${x.id===sg.id?' selected':''}>${esc(x.title||'未命名')}</option>`).join('');
   card.innerHTML=`<div class="card-head">
-      <button class="play" type="button" aria-label="播放"><svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></button>
+      <button class="play" type="button" aria-label="播放">${PLAY_ICON}</button>
       <input class="pname" type="text" value="${esc(pr.name)}" aria-label="練習名稱">
-      <span class="range">第 <input class="from" type="number" min="${a}" max="${b}" value="${pr.from}" aria-label="起始小節"> ～ <input class="to" type="number" min="${a}" max="${b}" value="${pr.to}" aria-label="結束小節"> 小節</span>
+      <select class="psong" aria-label="曲子">${opts}</select>
+      <span class="range">第 <input class="from" type="number" min="${a}" max="${b}" value="${pr.from}" aria-label="起始小節"> ～ <input class="to" type="number" min="${a}" max="${b}" value="${pr.to}" aria-label="結束小節"> 小節 <button class="btn sm" type="button" data-act="whole" title="範圍設成整首">整首</button></span>
       <span class="meta"></span>
       <div class="mini">
         <button class="btn" type="button" data-act="start">起音</button>
@@ -2919,16 +2931,16 @@ function practiceCard(pr,a,b){
         <button class="btn danger" type="button" data-act="del">刪除</button>
       </div></div>
     <div class="roll-scroll"><div class="roll"></div></div>`;
-  card.querySelectorAll('[data-clip]').forEach(b=>{ const c=clipsFor(pr)[+b.dataset.clip]; b.onclick=()=>playClip(c,b); });
+  card.querySelectorAll('[data-clip]').forEach(btn=>{ const c=clipsFor(pr)[+btn.dataset.clip]; btn.onclick=()=>playClip(c,btn); });
   let seg=null;
   const build=()=>{
     const roll=card.querySelector('.roll'); roll.innerHTML='';
     seg=practiceSeg(pr,card);
     const meta=card.querySelector('.meta');
-    if(!seg){ roll.innerHTML='<p class="note">這個範圍沒有音符</p>'; meta.textContent=''; return; }
-    meta.textContent=`${fmtB(seg.beats)} 拍`;
+    if(!seg){ roll.innerHTML=`<p class="note">${songRange(sg)?'這個範圍沒有音符':'這首曲子還沒有音符'}</p>`; meta.textContent=''; return; }
+    card._meta=()=>{ meta.textContent=`${fmtB(seg.beats)} 拍 · ♩=${Math.round(Math.max(20,(+sg.bpm||80)*prefs.speed/100))}`; }; card._meta();
     const notes=seg.items.filter(x=>!x.rest);
-    const lo=Math.min(...notes.map(n=>n.midi))-1, hi=Math.max(...notes.map(n=>n.midi))+1, range=Math.max(hi-lo,6);
+    const lo=notes.length?Math.min(...notes.map(n=>n.midi))-1:60, hi=notes.length?Math.max(...notes.map(n=>n.midi))+1:66, range=Math.max(hi-lo,6);
     let lastBar=null;
     seg.items.forEach(it=>{
       if(it.bar!==lastBar){ const m=document.createElement('div'); m.className='barmark'; m.innerHTML=`<span>${it.bar}</span>`; roll.append(m); lastBar=it.bar; }
@@ -2942,43 +2954,48 @@ function practiceCard(pr,a,b){
   build();
   const save=()=>{ saveLib(); };
   card.querySelector('.pname').addEventListener('input',e=>{pr.name=e.target.value;save();});
-  const onRange=()=>{
-    let f=Math.round(+card.querySelector('.from').value), t=Math.round(+card.querySelector('.to').value);
+  const setRange=(f,t)=>{
     if(!Number.isFinite(f)) f=a; if(!Number.isFinite(t)) t=f;
     f=Math.max(a,Math.min(b,f)); t=Math.max(a,Math.min(b,t)); if(t<f) t=f;
     card.querySelector('.from').value=f; card.querySelector('.to').value=t;
-    pr.from=f; pr.to=t; save(); stopAll(); build();
+    pr.from=f; pr.to=t; save(); if(card.classList.contains('active')) stopAll(); build();
   };
+  const onRange=()=>setRange(Math.round(+card.querySelector('.from').value),Math.round(+card.querySelector('.to').value));
   card.querySelector('.from').addEventListener('change',onRange);
   card.querySelector('.to').addEventListener('change',onRange);
-  card.querySelector('.play').onclick=()=>{ if(seg) playList([seg]); };
+  card.querySelector('[data-act=whole]').onclick=()=>setRange(a,b);
+  card.querySelector('.psong').onchange=e=>{
+    const old=songById(pr.songId); const ns=songById(e.target.value); if(!ns) return;
+    if(card.classList.contains('active')) stopAll();
+    if(!pr.name||(old&&pr.name===old.title)) pr.name=ns.title;
+    pr.songId=ns.id; const r=songRange(ns)||[1,1]; pr.from=r[0]; pr.to=r[1]; save(); card.replaceWith(practiceCard(pr));
+  };
+  card.querySelector('.play').onclick=e=>{ const btn=e.currentTarget; if(card.classList.contains('active')){ stopAll(); try{speechSynthesis.cancel();}catch(_){} return; } if(!seg) return; playList([seg]); if(!play) return; card.classList.add('active'); btn.innerHTML=STOP_ICON; btn.setAttribute('aria-label','停止'); };
   card.querySelector('[data-act=start]').onclick=()=>{ const n=seg&&seg.items.find(x=>!x.rest); if(n){ensureCtx(); voice(freq(n.midi),ctx.currentTime+.02,1.2);} };
-  const sp=card.querySelector('[data-act=speak]'); if(sp) sp.onclick=()=>{ if(!seg) return; const msg=speak(seg.items); const m=card.querySelector('.meta'); if(msg){ const old=m.textContent; m.textContent=msg; setTimeout(()=>{m.textContent=old;},3500);} };
+  const sp=card.querySelector('[data-act=speak]'); if(sp) sp.onclick=()=>{ if(!seg) return; const msg=speak(seg.items,sg); const m=card.querySelector('.meta'); if(msg){ const old=m.textContent; m.textContent=msg; setTimeout(()=>{m.textContent=old;},3500);} };
   let armed=null;
   card.querySelector('[data-act=del]').onclick=e=>{
     const btn=e.currentTarget;
     if(!armed){ btn.textContent='確認刪除'; armed=setTimeout(()=>{armed=null;btn.textContent='刪除';},3000); return; }
-    clearTimeout(armed); stopAll(); const s=song(); s.practices=s.practices.filter(x=>x!==pr); saveLib(true); renderPractice();
+    clearTimeout(armed); if(card.classList.contains('active')) stopAll(); lib.plan=lib.plan.filter(x=>x!==pr); saveLib(true); renderPractice();
   };
   return card;
 }
 $('addPractice').onclick=()=>{
-  const s=song(); if(!P.barNums.length) return;
-  const a=P.barNums[0], b=P.barNums[P.barNums.length-1];
-  const last=s.practices[s.practices.length-1];
-  const from=last?Math.min(b,last.to+1):a, to=Math.min(b,from+3);
-  s.practices.push({id:uid(),name:`練習 ${s.practices.length+1}`,from,to}); saveLib(true); renderPractice();
-  const cards=$('plist').querySelectorAll('.card'); const c=cards[cards.length-1]; if(c){ c.scrollIntoView({block:'nearest'}); c.querySelector('.from').focus(); }
+  const sg=song(); const r=songRange(sg);
+  const last=[...lib.plan].reverse().find(p=>p.songId===sg.id);
+  let from=r?r[0]:1, to=r?r[1]:1, name=sg.title;
+  if(last&&r&&!(last.from===r[0]&&last.to===r[1])){ from=Math.min(r[1],last.to+1); to=Math.min(r[1],from+3); name=`${sg.title} ${from}–${to}`; }
+  lib.plan.push({id:uid(),songId:sg.id,name,from,to}); saveLib(true); renderPractice();
+  const cards=$('plist').querySelectorAll('.card'); const c=cards[cards.length-1]; if(c){ c.scrollIntoView({block:'nearest'}); }
 };
-$('playWhole').onclick=()=>{ if(!P.barNums.length) return; const a=P.barNums[0], b=P.barNums[P.barNums.length-1]; playList([practiceSeg({from:a,to:b},null)]); };
-$('stop').onclick=()=>{stopAll();try{speechSynthesis.cancel();}catch(e){}};
 
 /* practice settings */
 const transSel=$('trans');
 for(let i=12;i>=-12;i--){const o=document.createElement('option');o.value=i;o.textContent=i===0?'原調':(i>0?'+':'')+i+(Math.abs(i)===12?'（八度）':'');transSel.append(o);}
 function syncPrefsUI(){
   $('pxBeat').value=pxBeat();
-  $('speed').value=prefs.speed; $('speedv').textContent=`${prefs.speed}%（♩=${Math.round(bpmNow())}）`; transSel.value=prefs.trans;
+  $('speed').value=prefs.speed; $('speedv').textContent=`${prefs.speed}%`; document.querySelectorAll('#plist .card').forEach(c=>c._meta&&c._meta()); transSel.value=prefs.trans;
   $('countin').checked=prefs.countin; $('loop').checked=prefs.loop;
   document.querySelectorAll('#timbre button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===prefs.timbre));
 }
