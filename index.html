@@ -231,6 +231,7 @@ body.role-member #tabBtn-import,body.role-member #tabBtn-edit{display:none}
 body.role-member .exp-bar,body.role-member .exp-row input[type=checkbox],body.role-member .exp-row [data-act=dl],body.role-member .exp-row [data-act=copy],body.role-member .exp-note,body.role-member .exp-hint{display:none}
 body.role-member #sharedPanel{order:-1}
 body.role-member #myPanel{display:none}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accent);color:var(--accent-ink);margin-right:4px}
 .exp-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}
 .exp-row{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--sunk)}
 .exp-pick{display:flex;align-items:center;gap:10px;flex:1 1 18em;min-width:0}
@@ -1037,7 +1038,21 @@ async function loadShared(){
     try{ const o=JSON.parse(await r.text()); if(!o||typeof o.text!=='string') throw 0; return {file:f,o}; }catch(e){ return {file:f,bad:true,why:'檔案格式不對，無法讀取'}; } }));
   sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; renderShared();
 }
+// a song you imported yourself and then uploaded is the same song as the library copy: link them, merge duplicates
+function linkShared(){
+  let changed=false;
+  (sharedCache||[]).forEach(it=>{ if(it.bad) return; const src='songs/'+it.file, text=it.o.text;
+    let local=lib.songs.find(s=>s.src===src);
+    const twins=lib.songs.filter(s=>s!==local&&!s.src&&s.text===text);
+    if(!local&&twins.length){ local=twins.shift(); local.src=src; local.srcText=text; changed=true; }
+    twins.forEach(t=>{ lib.plan.forEach(p=>{ if(p.songId===t.id) p.songId=local.id; });
+      local.clips=[...clipsOf(local),...clipsOf(t).filter(c=>c.src==='local')];
+      if(lib.current===t.id) lib.current=local.id; lib.songs=lib.songs.filter(x=>x!==t); PCACHE.delete(t.id); changed=true; });
+  });
+  if(changed){ saveLib(true); loadSong(); if(!$('tab-export').hidden) renderExport(); }
+}
 function renderShared(){
+  linkShared();
   const box=$('sharedList'); box.innerHTML='';
   (sharedCache||[]).forEach(it=>{
     const row=document.createElement('div'); row.className='sh-row';
@@ -1078,7 +1093,7 @@ function renderExport(){
     const Q=parsedOf(sg); const n=Q.barNums.length; const hasLy=/\n(?![^\n]*\|)[^\n#]*\S/.test(sg.text||'');
     const row=document.createElement('div'); row.className='exp-row';
     row.innerHTML=`<div class="exp-pick"><input type="checkbox"${EXP_SEL.has(sg.id)?' checked':''} aria-label="選取 ${esc(sg.title)}"><input class="name-in" type="text" value="${esc(sg.title||'')}" aria-label="曲名" title="可以直接改曲名"></div>
-      <span class="sh-meta">${n} 小節 · ♩=${sg.bpm||80} · <code class="fn">${esc(fileNameOf(sg))}</code></span>
+      <span class="sh-meta">${sg.src?'<span class="tag">已在團內曲庫</span> ':''}${n} 小節 · ♩=${sg.bpm||80} · <code class="fn">${esc(fileNameOf(sg))}</code></span>
       <button class="btn" type="button" data-act="copy">複製文字</button>
       <button class="btn primary" type="button" data-act="dl">下載 .json</button>
       <button class="btn danger" type="button" data-act="del">刪除</button>`;
