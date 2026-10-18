@@ -44,7 +44,7 @@ h1{font:700 24px/1.2 var(--jp);margin:0;letter-spacing:.02em}
 /* header */
 .top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px}
 .songbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:1}
-#songSel{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:500 15px var(--jp);max-width:100%;min-width:12em}
+#songSel,.name-in{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:500 15px var(--jp);max-width:100%;min-width:12em}
 .tabs{display:flex;gap:4px;background:var(--sunk);border:1px solid var(--line);border-radius:9px;padding:3px}
 .tabs button{border:0;background:transparent;padding:6px 18px;border-radius:7px;font-weight:500;color:var(--muted)}
 .tabs button[aria-selected=true]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
@@ -214,6 +214,27 @@ summary{cursor:pointer;font-weight:500}
 .play svg{width:16px;height:16px;fill:currentColor}
 .card.active .play{background:var(--hot,#d93a2b)}
 .psong{max-width:14em;min-width:0}
+.edit-pick{margin-bottom:10px}
+.name-in{min-width:16em;flex:1 1 16em;font:500 15px var(--jp)}
+.btn:disabled,.btn.primary:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.6)}
+.g-row.fresh{outline:2px solid var(--accent);border-radius:8px}
+.gate{position:fixed;inset:0;z-index:50;background:var(--bg);display:grid;place-items:center;padding:16px}
+.gate[hidden]{display:none}
+.gate-card{width:min(420px,100%);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.gate-card h2{margin:0;font-size:26px}
+.gate-card #gatePick,.gate-card form{display:flex;flex-direction:column;gap:10px}
+.gate-btn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:14px 16px;font-size:17px;text-align:left}
+.gate-btn small{font-size:13px;opacity:.8;font-weight:400}
+.gate-card input[type=password]{padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--sunk);color:var(--fg);font-size:16px}
+.gate-err{color:var(--err);min-height:1em;margin:0}
+body.role-member #tabBtn-import,body.role-member #tabBtn-edit{display:none}
+body.role-member .exp-bar,body.role-member .exp-row input[type=checkbox],body.role-member .exp-row [data-act=dl],body.role-member .exp-row [data-act=copy],body.role-member .exp-note,body.role-member .exp-hint{display:none}
+body.role-member #sharedPanel{order:-1}
+.exp-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.exp-row{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:var(--sunk)}
+.exp-pick{display:flex;align-items:center;gap:10px;flex:1 1 18em;min-width:0}
+.exp-pick .name-in{min-width:0}
+.exp-row .sh-meta{color:var(--muted);font-size:13px}
 .card .order{display:flex;flex-direction:column;gap:2px}
 .mini .btn.on{background:var(--hot,#d93a2b);color:#1a1a1a;border-color:transparent}
 .card .order .btn{padding:0 6px;font-size:10px;line-height:16px}
@@ -283,57 +304,38 @@ summary{cursor:pointer;font-weight:500}
 </style>
 </head>
 <body>
+<div class="gate" id="roleGate" hidden role="dialog" aria-modal="true" aria-labelledby="gateTitle">
+  <div class="gate-card">
+    <h2 id="gateTitle">譜唱</h2>
+    <div id="gatePick">
+      <p class="note">請選擇身份</p>
+      <button class="btn primary gate-btn" id="gateMember" type="button">🎵 合唱團員<small>直接開始練唱</small></button>
+      <button class="btn gate-btn" id="gateAdmin" type="button">🔑 管理員<small>匯入、打譜、管理曲庫</small></button>
+    </div>
+    <form id="gatePass" hidden>
+      <label class="field" for="gatePw">管理員密碼</label>
+      <input id="gatePw" type="password" autocomplete="current-password">
+      <p class="note gate-err" id="gateErr" aria-live="polite"></p>
+      <div class="row"><button class="btn primary" type="submit">進入</button><button class="btn" id="gateBack" type="button">返回</button></div>
+    </form>
+  </div>
+</div>
 <div class="wrap">
   <header class="top">
     <h1>譜唱</h1>
     <div class="songbar">
-      <label class="field" for="songSel">曲子</label>
-      <select id="songSel" aria-label="選擇曲子"></select>
-      <button class="btn" id="songNew" type="button">新增曲子</button>
-      <button class="btn" id="songShared" type="button" aria-pressed="false">團內曲庫</button>
-      <button class="btn" id="songIO" type="button" aria-pressed="false">匯出／匯入</button>
-      <button class="btn danger" id="songDel" type="button">刪除這首</button>
+      <button class="btn" id="roleBtn" type="button" title="切換身份">身份</button>
     </div>
     <button class="btn" id="themeBtn" type="button" title="切換外觀">外觀：自動</button>
     <nav class="tabs" role="tablist" aria-label="模式">
       <button role="tab" id="tabBtn-import" data-tab="import" aria-selected="true" type="button">匯入</button>
       <button role="tab" id="tabBtn-edit" data-tab="edit" aria-selected="false" type="button">打譜</button>
       <button role="tab" id="tabBtn-practice" data-tab="practice" aria-selected="false" type="button">練唱</button>
+      <button role="tab" id="tabBtn-export" data-tab="export" aria-selected="false" type="button">曲庫</button>
     </nav>
   </header>
 
-  <section class="panel" id="sharedPanel" hidden aria-label="團內曲庫">
-    <div class="row" style="justify-content:space-between">
-      <h3 class="qe-title">團內曲庫</h3>
-      <div class="row"><span class="note" id="sharedMsg"></span><button class="btn" id="sharedReload" type="button">重新整理</button></div>
-    </div>
-    <div id="sharedList" class="shared-list"></div>
-    <p class="note">放在網站 <code>songs/</code> 資料夾裡的 .json 檔會列在這裡。載入後會複製一份到你的瀏覽器，之後的修改和練習清單都只存在你這邊；曲庫的檔案更新時，這裡會顯示「有新版本」。</p>
-  </section>
 
-  <section class="panel" id="ioPanel" hidden aria-label="匯出與匯入">
-    <div class="io">
-      <div>
-        <h3>匯出這首曲子</h3>
-        <div class="row">
-          <button class="btn primary" id="expDownload" type="button">下載 .json 檔</button>
-          <button class="btn" id="expCopy" type="button">複製成文字</button>
-          <span class="note" id="expMsg"></span>
-        </div>
-        <p class="note" style="margin-top:8px">檔案裡包含音符、歌詞、調號、速度和練習清單。如果按了下載沒有反應，請改用「複製成文字」，貼到記事本存成檔案。</p>
-      </div>
-      <div>
-        <h3>匯入曲子</h3>
-        <div class="row">
-          <label class="btn" for="impFile">選擇檔案…</label>
-          <input id="impFile" type="file" accept=".json,.txt,application/json,text/plain" hidden>
-          <span class="note" id="impMsg"></span>
-        </div>
-        <textarea id="impText" placeholder="或把匯出的文字貼在這裡" spellcheck="false" style="margin-top:8px"></textarea>
-        <div class="row" style="margin-top:6px"><button class="btn" id="impPaste" type="button">匯入貼上的內容</button></div>
-      </div>
-    </div>
-  </section>
 
   <!-- ============ 匯入 ============ -->
   <section id="tab-import" role="tabpanel" aria-labelledby="tabBtn-import" style="display:flex;flex-direction:column;gap:16px">
@@ -355,7 +357,10 @@ summary{cursor:pointer;font-weight:500}
         <div class="row">
           <label class="field" id="xmlVerseWrap" hidden>歌詞 <select id="xmlVerse"></select></label>
           <label class="field" title="同一個聲部同時有兩個音（分部）時，要取哪一個">分部時取 <select id="xmlChord"><option value="top">上方的音</option><option value="bottom">下方的音</option></select></label>
-          <button class="btn primary" id="xmlGo" type="button">建立新曲子</button>
+        </div>
+        <div class="row">
+          <label class="field" for="xmlName">曲名</label><input id="xmlName" class="name-in" type="text" autocomplete="off">
+          <button class="btn primary" id="xmlGo" type="button">儲存匯入的曲子</button>
           <button class="btn" id="xmlCancel" type="button">取消</button>
         </div>
       </div>
@@ -371,13 +376,31 @@ summary{cursor:pointer;font-weight:500}
           <label class="field">調號 <select id="scKey"></select></label>
           <label class="field" title="有弱起拍就填 0">第一行第一小節是第 <input id="scStart" type="number" min="0" max="999"> 小節</label>
           <label class="field" id="scLyrWrap" hidden>歌詞 <select id="scLyr"></select></label>
-          <label class="field">寫進 <select id="scTarget"><option value="new">新的曲子</option><option value="cur">目前這首（取代同號小節）</option></select></label>
           <label class="field">分部時取 <select id="scChord"><option value="top">上方的音</option><option value="bottom">下方的音</option></select></label>
-          <button class="btn primary" id="scGo" type="button" disabled>產生對照條與草稿輸入碼</button>
+        </div>
+        <div class="row">
+          <label class="field" for="scName">曲名</label><input id="scName" class="name-in" type="text" autocomplete="off">
+          <button class="btn primary" id="scGo" type="button" disabled>辨識並儲存匯入的曲子</button>
           <button class="btn" id="scCancel" type="button">關閉</button>
         </div>
         <p class="note">譜號是依照你點的那條譜自動判斷的，不對的話請改。請先確認調號，升降會照它判斷。會辨識音高、音符和休止符的長短、附點，以及相鄰兩個同音之間的連結線；臨時升降記號、歌詞和跨好幾個音的圓滑線需要你補上。</p>
       </div>
+    </section>
+
+    <section class="panel" id="jsonImpPanel" aria-label="從 JSON 檔匯入">
+      <div class="row" style="justify-content:space-between">
+        <h2 class="qe-title">從 JSON 檔匯入</h2>
+        <span class="note">用「曲庫」分頁下載的 .json 檔，可以一次選很多個</span>
+      </div>
+      <div class="row">
+        <label class="btn" for="impFile">選擇 .json 檔…</label>
+        <input id="impFile" type="file" accept=".json,.txt,application/json,text/plain" multiple hidden>
+        <span class="note" id="impMsg" aria-live="polite"></span>
+      </div>
+      <details style="margin-top:6px"><summary>或貼上匯出的文字</summary>
+        <textarea id="impText" placeholder="把匯出的文字貼在這裡" spellcheck="false" style="margin-top:8px"></textarea>
+        <div class="row" style="margin-top:6px"><button class="btn" id="impPaste" type="button">匯入貼上的內容</button></div>
+      </details>
     </section>
 
     <section class="rev panel" id="revBox" hidden aria-label="逐小節校對">
@@ -429,6 +452,11 @@ summary{cursor:pointer;font-weight:500}
   <!-- ============ 打譜 ============ -->
   <section id="tab-edit" role="tabpanel" aria-labelledby="tabBtn-edit" hidden style="display:none;flex-direction:column;gap:16px">
     <div class="panel">
+      <div class="row edit-pick">
+        <label class="field" for="songSel">要編輯的曲子</label>
+        <select id="songSel" aria-label="選擇要編輯的曲子"></select>
+        <button class="btn" id="songNew" type="button" title="從空白開始手動打譜">＋ 空白曲子</button>
+      </div>
       <div class="song-meta">
         <label class="field" for="songTitle">曲名</label>
         <input id="songTitle" type="text" autocomplete="off">
@@ -448,6 +476,20 @@ summary{cursor:pointer;font-weight:500}
         <p class="note" style="margin-top:6px">標記會在譜上顯示成「@號碼」。不需要時，點選它再按刪除。</p>
       </details>
     </div>
+
+    <section class="panel" id="guidePanel" aria-label="導讀錄音">
+      <div class="row" style="justify-content:space-between">
+        <h2 class="qe-title">導讀錄音</h2>
+        <span class="note" id="guideMsg" aria-live="polite"></span>
+      </div>
+      <div id="guideList" class="guide-list"></div>
+      <div class="row">
+        <button class="btn" id="recBtn" type="button">● 開始錄音</button>
+        <label class="btn" for="guideFile">選擇錄音檔…</label>
+        <input id="guideFile" type="file" accept="audio/*,video/mp4,video/quicktime,.m4a,.mp3,.wav,.aac,.ogg,.webm,.mp4,.mov" hidden>
+      </div>
+      <p class="note">請指揮或聲部長念一遍歌詞錄下來。填上對應的小節後，那個範圍的練習卡片會出現「導讀」按鈕。錄音只存在這台裝置；要分享給團員，按「下載」拿到錄音檔，和「曲庫」分頁下載的 .json 一起放進網站的 <code>songs/</code> 資料夾。</p>
+    </section>
 
     <section class="panel" id="codePanel" aria-label="快速輸入碼">
       <div class="row" style="justify-content:space-between">
@@ -581,6 +623,31 @@ summary{cursor:pointer;font-weight:500}
     </div>
   </section>
 
+  <!-- ============ 匯出 ============ -->
+  <section id="tab-export" role="tabpanel" aria-labelledby="tabBtn-export" hidden style="display:none;flex-direction:column;gap:16px">
+    <section class="panel" aria-label="匯出曲子">
+      <div class="row" style="justify-content:space-between">
+        <h2 class="qe-title">我的曲子</h2>
+        <span class="note exp-hint">可以改曲名、匯出或刪除。每首存成一個 .json 檔，放進 GitHub 的 <code>songs/</code> 資料夾，就會出現在團內曲庫</span>
+      </div>
+      <div class="row exp-bar">
+        <label class="field"><input type="checkbox" id="expAll">全選</label>
+        <button class="btn primary" id="expSel" type="button" disabled>下載選取的</button>
+        <span class="note" id="expMsg" aria-live="polite"></span>
+      </div>
+      <div id="expList" class="exp-list"></div>
+      <p class="note exp-note">一次下載多個檔案時，瀏覽器可能會先問「是否允許下載多個檔案」，請按允許。檔案裡包含音符、歌詞、調號、速度和這首歌在練唱分頁的練習段落。</p>
+    </section>
+    <section class="panel" id="sharedPanel" aria-label="團內曲庫">
+      <div class="row" style="justify-content:space-between">
+        <h3 class="qe-title">團內曲庫</h3>
+        <div class="row"><span class="note" id="sharedMsg"></span><button class="btn" id="sharedReload" type="button">重新整理</button></div>
+      </div>
+      <div id="sharedList" class="shared-list"></div>
+      <p class="note">放在網站 <code>songs/</code> 資料夾裡的 .json 檔會列在這裡。載入後會複製一份到你的瀏覽器，之後的修改和練習清單都只存在你這邊；曲庫的檔案更新時，這裡會顯示「有新版本」。</p>
+    </section>
+  </section>
+
   <!-- ============ 練唱 ============ -->
   <section id="tab-practice" role="tabpanel" aria-labelledby="tabBtn-practice" hidden style="flex-direction:column;gap:14px">
     <div class="panel pbar" role="toolbar" aria-label="所有卡片共用的設定">
@@ -588,19 +655,6 @@ summary{cursor:pointer;font-weight:500}
       <label class="field"><input id="countin" type="checkbox" checked>預備拍</label>
       <label class="field" title="拉寬可以讓歌詞和音名不擠在一起">小節寬度 <input id="pxBeat" type="range" min="40" max="160" step="10"></label>
     </div>
-    <section class="panel" id="guidePanel" aria-label="導讀錄音">
-      <div class="row" style="justify-content:space-between">
-        <h3 class="qe-title">導讀錄音 <span class="note" id="guideSong"></span></h3>
-        <span class="note" id="guideMsg" aria-live="polite"></span>
-      </div>
-      <div id="guideList" class="guide-list"></div>
-      <div class="row">
-        <button class="btn" id="recBtn" type="button">● 開始錄音</button>
-        <label class="btn" for="guideFile">選擇錄音檔…</label>
-        <input id="guideFile" type="file" accept="audio/*,video/mp4,video/quicktime,.m4a,.mp3,.wav,.aac,.ogg,.webm,.mp4,.mov" hidden>
-      </div>
-      <p class="note">請指揮或聲部長念一遍歌詞錄下來。填上對應的小節後，那個範圍的練習卡片會出現「導讀」按鈕。錄音只存在這台裝置；要分享給團員，按「下載」拿到錄音檔，和「匯出」的 .json 一起放進網站的 <code>songs/</code> 資料夾。</p>
-    </section>
     <div class="list" id="plist"></div>
     <div class="row"><button class="btn primary" id="addPractice" type="button">＋ 新增練習</button><button class="btn" id="foldAll" type="button">全部收合</button><button class="btn" id="unfoldAll" type="button">全部展開</button><span class="note" id="barRange"></span></div>
   </section>
@@ -942,16 +996,15 @@ function renderSongSel(){
 }
 $('songSel').onchange=e=>{ stopAll(); closeLyricSilently(); lib.current=e.target.value; saveLib(true); loadSong(); };
 $('songNew').onclick=()=>{ stopAll(); const s=newSong(); lib.songs.push(s); lib.current=s.id; saveLib(true); loadSong(); if(!$('tab-edit').hidden){ $('songTitle').focus(); $('songTitle').select(); } };
-let delArmed=null;
-$('songDel').onclick=()=>{
-  const b=$('songDel');
-  if(!delArmed){ b.textContent='再按一次確認刪除'; delArmed=setTimeout(()=>{delArmed=null;b.textContent='刪除這首';},3000); return; }
-  clearTimeout(delArmed); delArmed=null; b.textContent='刪除這首'; stopAll();
-  clipsOf(song()).filter(c=>c.src==='local').forEach(c=>AudioDB.del(c.id).catch(()=>{}));
-  lib.songs=lib.songs.filter(s=>s.id!==lib.current); lib.plan=lib.plan.filter(p=>p.songId!==lib.current);
+function deleteSong(id){
+  const sg=songById(id); if(!sg) return; stopAll();
+  clipsOf(sg).filter(c=>c.src==='local').forEach(c=>AudioDB.del(c.id).catch(()=>{}));
+  try{ ScanDB.op('readwrite',st=>st.delete(id)); }catch(e){} if(typeof STRIP_MEM!=='undefined') delete STRIP_MEM[id];
+  lib.songs=lib.songs.filter(s=>s.id!==id); lib.plan=lib.plan.filter(p=>p.songId!==id); PCACHE.delete(id);
   if(!lib.songs.length) lib.songs.push(newSong());
-  lib.current=lib.songs[0].id; saveLib(true); loadSong();
-};
+  if(!songById(lib.current)) lib.current=lib.songs[0].id;
+  saveLib(true); loadSong();
+}
 /* ---- shared song library: songs/*.json next to this page ---- */
 let sharedCache=null;
 function ghRepo(){
@@ -997,27 +1050,46 @@ function renderShared(){
         Object.assign(local,f,{srcText:f.text}); if(!local.practices.length) local.practices=filePractices(it.o); if(!lib.plan.some(p=>p.songId===local.id)) planAdd(local,filePractices(it.o));
         local.clips=[...clipsOf(local).filter(c=>c.src==='local'),...sharedClips(it.o)]; lib.current=local.id;
       }
-      saveLib(true); stopAll(); loadSong(); renderShared(); $('sharedMsg').textContent=`已開啟「${f.title}」`;
+      { const cur=song(); if(!lib.plan.some(p=>p.songId===cur.id)){ const rg=songRange(cur); lib.plan.push({id:uid(),songId:cur.id,name:cur.title,from:rg?rg[0]:1,to:rg?rg[1]:1,...PR_DEF}); } }
+      saveLib(true); stopAll(); loadSong(); renderShared(); renderExport(); $('sharedMsg').textContent=`已載入「${f.title}」，到「練唱」分頁就能練`;
     };
     box.append(row);
   });
 }
-$('songShared').onclick=()=>{ const p=$('sharedPanel'); p.hidden=!p.hidden; $('songShared').setAttribute('aria-pressed',!p.hidden); if(!p.hidden&&!sharedCache) loadShared(); };
+
 $('sharedReload').onclick=loadShared;
-$('songIO').onclick=()=>{ const p=$('ioPanel'); p.hidden=!p.hidden; $('songIO').setAttribute('aria-pressed',!p.hidden); };
-function exportText(){ const s=song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
-$('expDownload').onclick=()=>{
-  try{ const blob=new Blob([exportText()],{type:'application/json'}); const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob); a.download=(song().title||'song').replace(/[\\/:*?"<>|]/g,'_')+'.json';
-    document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);
-    $('expMsg').textContent='已送出下載';
-  }catch(e){ $('expMsg').textContent='無法下載，請改用複製'; }
-};
-$('expCopy').onclick=()=>{
-  const txt=exportText();
-  navigator.clipboard.writeText(txt).then(()=>{$('expMsg').textContent='已複製';},()=>{
-    const t=$('impText'); t.value=txt; t.focus(); t.select(); $('expMsg').textContent='已放到右邊的框裡並選取，請按複製';});
-};
+function exportText(sg){ const s=sg||song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
+function fileNameOf(sg){ return (sg.title||'song').replace(/[\\/:*?"<>|]/g,'_').trim()+'.json'; }
+function downloadSong(sg){ const blob=new Blob([exportText(sg)],{type:'application/json'}); const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=fileNameOf(sg); document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500); }
+const EXP_SEL=new Set();
+function renderExport(){
+  const box=$('expList'); box.innerHTML='';
+  [...EXP_SEL].forEach(id=>{ if(!songById(id)) EXP_SEL.delete(id); });
+  lib.songs.forEach(sg=>{
+    const Q=parsedOf(sg); const n=Q.barNums.length; const hasLy=/\n(?![^\n]*\|)[^\n#]*\S/.test(sg.text||'');
+    const row=document.createElement('div'); row.className='exp-row';
+    row.innerHTML=`<div class="exp-pick"><input type="checkbox"${EXP_SEL.has(sg.id)?' checked':''} aria-label="選取 ${esc(sg.title)}"><input class="name-in" type="text" value="${esc(sg.title||'')}" aria-label="曲名" title="可以直接改曲名"></div>
+      <span class="sh-meta">${n} 小節 · ♩=${sg.bpm||80} · <code class="fn">${esc(fileNameOf(sg))}</code></span>
+      <button class="btn" type="button" data-act="copy">複製文字</button>
+      <button class="btn primary" type="button" data-act="dl">下載 .json</button>
+      <button class="btn danger" type="button" data-act="del">刪除</button>`;
+    row.querySelector('.name-in').oninput=e=>{ sg.title=e.target.value; saveLib(); row.querySelector('.fn').textContent=fileNameOf(sg); };
+    let armed=null; row.querySelector('[data-act=del]').onclick=e=>{ const b=e.currentTarget;
+      if(!armed){ b.textContent='再按一次刪除'; armed=setTimeout(()=>{ armed=null; b.textContent='刪除'; },3000); return; }
+      clearTimeout(armed); EXP_SEL.delete(sg.id); deleteSong(sg.id); renderExport(); $('expMsg').textContent=`已刪除「${sg.title}」`; };
+    row.querySelector('input[type=checkbox]').onchange=e=>{ if(e.target.checked) EXP_SEL.add(sg.id); else EXP_SEL.delete(sg.id); syncExpBar(); };
+    row.querySelector('[data-act=dl]').onclick=()=>{ try{ downloadSong(sg); $('expMsg').textContent=`已下載 ${fileNameOf(sg)}`; }catch(e){ $('expMsg').textContent='無法下載，請改用「複製文字」'; } };
+    row.querySelector('[data-act=copy]').onclick=e=>{ const b=e.currentTarget; navigator.clipboard.writeText(exportText(sg)).then(()=>{ b.textContent='已複製'; setTimeout(()=>b.textContent='複製文字',1500); },()=>{ $('expMsg').textContent='這個瀏覽器不允許複製，請改用下載'; }); };
+    box.append(row);
+  });
+  syncExpBar();
+}
+function syncExpBar(){ const n=EXP_SEL.size; $('expSel').disabled=!n; $('expSel').textContent=n?`下載選取的 ${n} 首`:'下載選取的'; $('expAll').checked=n>0&&n===lib.songs.length; $('expAll').indeterminate=n>0&&n<lib.songs.length; }
+$('expAll').onchange=e=>{ EXP_SEL.clear(); if(e.target.checked) lib.songs.forEach(x=>EXP_SEL.add(x.id)); renderExport(); };
+$('expSel').onclick=async()=>{ const list=lib.songs.filter(x=>EXP_SEL.has(x.id)); let k=0;
+  for(const sg of list){ try{ downloadSong(sg); k++; }catch(e){} $('expMsg').textContent=`下載中… ${k}／${list.length}`; await new Promise(r=>setTimeout(r,400)); }
+  $('expMsg').textContent=`已下載 ${k} 個檔案`; };
 function songFields(o){
   return {title:String(o.title||'匯入的曲子'),clef:['treble','treble8','bass'].includes(o.clef)?o.clef:'bass',key:Math.max(-7,Math.min(7,+o.key||0)),bpm:+o.bpm||80,
     startBar:Number.isFinite(+o.startBar)?+o.startBar:1,ttsLang:TTS_LANGS[o.ttsLang]?o.ttsLang:'ja-JP',text:o.text};
@@ -1036,23 +1108,22 @@ function importData(txt){
   lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong();
   return `已匯入「${s.title}」`;
 }
-$('impFile').onchange=e=>{
-  const f=e.target.files[0]; if(!f) return;
-  const r=new FileReader(); r.onload=()=>{ $('impMsg').textContent=importData(String(r.result)); e.target.value=''; }; r.readAsText(f);
-};
+$('impFile').onchange=async e=>{ const fs=[...e.target.files]; e.target.value=''; if(!fs.length) return; const out=[];
+  for(const f of fs){ out.push(importData(await f.text())); } $('impMsg').textContent=out.join('；'); };
 $('impPaste').onclick=()=>{ $('impMsg').textContent=importData($('impText').value); $('impText').value=''; };
 
 function setTab(t){
+  if(typeof ROLE!=='undefined'&&ROLE==='member'&&(t==='import'||t==='edit')) t='practice';
   prefs.tab=t; savePrefs(); stopAll(); closeLyricSilently(); clearSel();
-  ['import','edit','practice'].forEach(n=>{ const on=n===t; $('tab-'+n).hidden=!on; $('tab-'+n).style.display=on?'flex':'none'; $('tabBtn-'+n).setAttribute('aria-selected',on); });
+  ['import','edit','practice','export'].forEach(n=>{ const on=n===t; $('tab-'+n).hidden=!on; $('tab-'+n).style.display=on?'flex':'none'; $('tabBtn-'+n).setAttribute('aria-selected',on); });
   if(REV.on&&t!=='import') endReview();
-  if(t==='practice') renderPractice(); else if(t==='edit') drawStaff(); else { refreshStripStatus(); if(REV.on) revDraw(); }
+  if(t==='practice') renderPractice(); else if(t==='export'){ renderExport(); if(!sharedCache) loadShared(); } else if(t==='edit') drawStaff(); else { refreshStripStatus(); if(REV.on) revDraw(); }
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
 /* ================= edit tab: song meta ================= */
 function loadSong(){
-  const s=song(); renderSongSel(); reparse();
+  const s=song(); renderSongSel(); reparse(); if(typeof renderGuides==='function') renderGuides();
   $('songTitle').value=s.title; $('songBpm').value=s.bpm; $('songStart').value=s.startBar; $('key').value=s.key; $('songTts').value=s.ttsLang||'ja-JP';
   const ta=$('src'); ta.value=s.text; const n=ta.value.length; ta.setSelectionRange(n,n); lastCaret=n; caretTouched=false;
   clearSel(); syncQE(); updateStatus(); drawStaff(); if(typeof transSel!=='undefined') syncPrefsUI();
@@ -1778,7 +1849,7 @@ function clipRange(c){ const f=+c.from||0, t=+c.to||0; return f||t?`第 ${f||t}�
 function clipsFor(pr){ const lo=Math.min(pr.from,pr.to), hi=Math.max(pr.from,pr.to);
   return clipsOf((pr.songId&&songById(pr.songId))||song()).filter(c=>{ const f=+c.from||0, t=+c.to||f; return f&&!(t<lo||f>hi); }); }
 function renderGuides(){
-  const box=$('guideList'); if(!box) return; if($('guideSong')) $('guideSong').textContent='（目前曲子：'+(song().title||'')+'）'; box.innerHTML=''; const s=song(); const cl=clipsOf(s);
+  const box=$('guideList'); if(!box) return;  box.innerHTML=''; const s=song(); const cl=clipsOf(s);
   if(!cl.length){ box.innerHTML='<p class="note">還沒有導讀錄音。</p>'; return; }
   cl.forEach(c=>{
     const row=document.createElement('div'); row.className='g-row';
@@ -1796,7 +1867,7 @@ function renderGuides(){
     let armed=null;
     row.querySelector('[data-g=del]').onclick=e=>{ const b=e.currentTarget;
       if(!armed){ b.textContent='確認刪除'; armed=setTimeout(()=>{armed=null;b.textContent='刪除';},3000); return; }
-      clearTimeout(armed); stopAll(); s.clips=cl.filter(x=>x!==c); if(c.src==='local') AudioDB.del(c.id).catch(()=>{}); saveLib(true); renderPractice(); };
+      clearTimeout(armed); stopAll(); s.clips=cl.filter(x=>x!==c); if(c.src==='local') AudioDB.del(c.id).catch(()=>{}); saveLib(true); renderGuides(); renderCards(); };
     box.append(row);
   });
 }
@@ -1804,8 +1875,9 @@ async function addLocalClip(blob,label){
   const s=song(); const id=uid(); const mime=blob.type||'audio/webm';
   const file=`guide-${id}.${extOf(mime)}`;
   try{ await AudioDB.put({id,blob,mime}); }catch(e){ guideMsg('這個瀏覽器無法儲存錄音（可能是無痕模式）'); return; }
-  clipsOf(s).push({id,label,from:'',to:'',src:'local',file,mime}); saveLib(true); renderPractice();
-  guideMsg('已加入。可以在右邊填上對應的小節，練習卡片上就會出現「導讀」按鈕');
+  clipsOf(s).push({id,label,from:'',to:'',src:'local',file,mime}); saveLib(true); renderGuides(); renderCards();
+  const rows=$('guideList').querySelectorAll('.g-row'); const last=rows[rows.length-1]; if(last){ last.classList.add('fresh'); const f=last.querySelector('.g-from'); f.focus(); }
+  guideMsg('已加入。請在這段錄音的「第 __ ～ __ 小節」填上它念的範圍，練習卡片上就會出現「導讀」按鈕');
 }
 $('guideFile').onchange=e=>{ const f=e.target.files[0]; if(!f) return; addLocalClip(f,f.name.replace(/\.[^.]+$/,'')); e.target.value=''; };
 let rec=null, recT=null;
@@ -2139,8 +2211,10 @@ function renderXmlBox(){
     row.innerHTML=`<input type="radio" name="xmlVoice" id="${id}" value="${i}" ${i===0?'checked':''}><span class="sh-title">${esc(v.label)}</span><span class="sh-meta">${v.notes} 個音${v.lyrics?' · 有歌詞':''}${v.verses.length>1?' · '+v.verses.length+' 段歌詞':''}</span>`;
     list.append(row);
   });
-  list.onchange=syncXmlVerse; syncXmlVerse();
+  list.onchange=()=>{ syncXmlVerse(); syncXmlName(); }; syncXmlVerse(); syncXmlName();
 }
+function xmlTitleFor(v){ const d=XML.doc; const t=d.querySelector('work > work-title')?.textContent.trim()||d.querySelector('movement-title')?.textContent.trim()||(XML.name||'').replace(/\.[^.]+$/,''); return (t?t+' – ':'')+v.label; }
+function syncXmlName(){ const v=XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0]; $('xmlName').value=xmlTitleFor(v); }
 function syncXmlVerse(){
   const v=XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0]; const sel=$('xmlVerse'); sel.innerHTML='';
   (v.verses.length?v.verses:['1']).forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=`第 ${n} 段`; sel.append(o); });
@@ -2150,10 +2224,13 @@ $('xmlGo').onclick=()=>{
   if(!XML) return; const v=XML.voices[+(document.querySelector('input[name=xmlVoice]:checked')||{}).value||0];
   try{
     const r=xmlToSong(XML.doc,v,{verse:$('xmlVerse').value,chord:$('xmlChord').value});
-    const s=newSong({title:r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
+    const s=newSong({title:$('xmlName').value.trim()||r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
     lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong(); syncKeySel();
     $('xmlBox').hidden=true; XML=null;
-    impStatus(`已建立「${s.title}」：${r.bars} 小節${r.anyLyric?'，含歌詞':''}。反覆記號照譜面順序展開前的寫法匯入。`);
+    impStatus(`已建立「${s.title}」：${r.bars} 小節${r.anyLyric?'，含歌詞':''}。這類檔案是精確的樂譜資料，不需要校對（逐小節校對只用在掃描 PDF／圖片）。有反覆記號的話，是照譜面寫法匯入、沒有展開。`);
+    const go=document.createElement('button'); go.className='btn primary'; go.type='button'; go.textContent='到練唱分頁練這首';
+    go.onclick=()=>{ if(!lib.plan.some(p=>p.songId===s.id)){ const rg=songRange(s); lib.plan.push({id:uid(),songId:s.id,name:s.title,from:rg?rg[0]:1,to:rg?rg[1]:1,...PR_DEF}); saveLib(true); } setTab('practice'); const cs=[...document.querySelectorAll('#plist .card')]; const c=cs.find(x=>x.querySelector('.psong')&&x.querySelector('.psong').value===s.id); if(c) c.scrollIntoView({block:'center'}); };
+    $('impStatus').append(' ',go);
   }catch(err){ impStatus('轉換失敗：'+(err.message||err)); }
 };
 $('xmlCancel').onclick=()=>{ $('xmlBox').hidden=true; XML=null; impStatus(''); };
@@ -2293,7 +2370,7 @@ $('pdfFile').onchange=async e=>{
     const total=SCAN.pages.reduce((a,p)=>a+p.systems.length,0);
     if(!total){ impStatus('找不到五線譜。請用樂譜軟體輸出的 PDF；如果是拍照或掃描，請盡量拍正、拍清楚。'); closeScan(); return; }
     impStatus(`找到 ${total} 行譜。請點一下你的聲部那條五線譜。`);
-    $('scanBox').hidden=false; syncScKey(); $('scStart').value=Math.max(0,+song().startBar||1); renderScan();
+    $('scanBox').hidden=false; syncScKey(); $('scName').value=(SCAN.name||'').replace(/\.[^.]+$/,''); $('scStart').value=Math.max(0,+song().startBar||1); renderScan();
   }catch(err){ impStatus(err.message||'無法讀取這個檔案'); closeScan(); }
 };
 function closeScan(){ if(SCAN&&SCAN.url) URL.revokeObjectURL(SCAN.url); if(SCAN&&SCAN.kind==='pdf') try{ SCAN.src.destroy(); }catch(e){} SCAN=null; const b=$('scanBox'); if(b) b.hidden=true; }
@@ -2632,7 +2709,7 @@ $('scGo').onclick=async()=>{
   const lyIdx=$('scLyrWrap').hidden?-1:+$('scLyr').value;
   const startBar=bar; const lines=[]; const strips=[]; let nNotes=0, nSyl=0; const allBars=[];
   $('scGo').disabled=true;
-  if($('scTarget').value==='new'){ const k=+$('scKey').value; stopAll(); const ns=newSong({title:(SCAN.name||'').replace(/\.[^.]+$/,'')||'新曲子',clef,key:k,startBar,text:''}); lib.songs.push(ns); lib.current=ns.id; saveLib(true); loadSong(); syncKeySel(); }
+  { const k=+$('scKey').value; stopAll(); const ns=newSong({title:$('scName').value.trim()||(SCAN.name||'').replace(/\.[^.]+$/,'')||'新曲子',clef,key:k,startBar,text:''}); lib.songs.push(ns); lib.current=ns.id; saveLib(true); loadSong(); syncKeySel(); }
   try{
     for(let pi=0;pi<SCAN.pages.length;pi++){
       const pg=SCAN.pages[pi]; if(!pg.systems.length) continue;
@@ -2912,12 +2989,12 @@ function practiceSeg(pr,card){
   return {items,beats:endB,card,song:sg,opt:{speed:pr.speed||100,trans:pr.trans||0,timbre:pr.timbre||'piano',loop:!!pr.loop},lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
 }
 function songRange(sg){ const Q=parsedOf(sg); return Q.barNums.length?[Q.barNums[0],Q.barNums[Q.barNums.length-1]]:null; }
-function renderPractice(){ renderGuides(); renderCards(); }
+function renderPractice(){ renderCards(); }
 function renderCards(){
   const list=$('plist'); list.innerHTML='';
   const before=lib.plan.length; lib.plan=lib.plan.filter(p=>songById(p.songId)); if(lib.plan.length!==before) saveLib();
   $('barRange').textContent='每張卡片可以選不同的曲子，一個頁面就能練完所有曲目';
-  if(!lib.plan.length){ list.innerHTML='<div class="empty-state">還沒有練習。按「新增練習」，選好曲子和要練的小節。</div>'; return; }
+  if(!lib.plan.length){ list.innerHTML='<div class="empty-state">還沒有練習。先到「曲庫」分頁載入團內的歌，再按「新增練習」選好曲子和要練的小節。</div>'; return; }
   lib.plan.forEach(pr=>list.append(practiceCard(pr)));
 }
 function practiceCard(pr){
@@ -3045,7 +3122,33 @@ $('themeBtn').onclick=()=>{ prefs.theme={auto:'light',light:'dark',dark:'auto'}[
 
 /* ================= boot ================= */
 if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>drawStaff());
-loadSong(); syncPrefsUI(); applyTheme(); renderCodePreview(); setTab('import');
+/* ================= role: member / admin ================= */
+// 管理員密碼的 SHA-256。要換密碼：把新密碼的 SHA-256 貼在這裡（預設密碼 choir2026）
+const ADMIN_HASH='2fb1851b858a5215f138ce59879f266ec59d44da462691a84a307d3f022074f1';
+const ROLE_KEY='seg-practice.role';
+var ROLE=null;
+async function sha256hex(t){ const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function applyRole(r,first){
+  ROLE=r; document.body.classList.toggle('role-member',r==='member'); document.body.classList.toggle('role-admin',r==='admin');
+  $('roleBtn').textContent=r==='admin'?'管理員 · 切換身份':'團員 · 切換身份';
+  $('roleGate').hidden=true;
+  if(r==='member'){ if(REV.on) endReview(); setTab(first&&prefs.tab==='export'?'export':'practice'); }
+  else setTab(first&&['import','edit','practice','export'].includes(prefs.tab)?prefs.tab:'import');
+}
+function showGate(){ $('roleGate').hidden=false; $('gatePick').hidden=false; $('gatePass').hidden=true; $('gateErr').textContent=''; stopAll(); }
+$('gateMember').onclick=()=>{ try{ localStorage.setItem(ROLE_KEY,'member'); sessionStorage.removeItem(ROLE_KEY); }catch(e){} applyRole('member'); };
+$('gateAdmin').onclick=()=>{ $('gatePick').hidden=true; $('gatePass').hidden=false; $('gatePw').value=''; $('gatePw').focus(); };
+$('gateBack').onclick=()=>{ $('gatePick').hidden=false; $('gatePass').hidden=true; $('gateErr').textContent=''; };
+$('gatePass').onsubmit=async e=>{ e.preventDefault();
+  let h=''; try{ h=await sha256hex($('gatePw').value); }catch(err){ $('gateErr').textContent='這個瀏覽器無法驗證密碼（請用 https 網址開啟）'; return; }
+  if(h!==ADMIN_HASH){ $('gateErr').textContent='密碼不對，請再試一次'; $('gatePw').select(); return; }
+  try{ localStorage.setItem(ROLE_KEY,'admin'); sessionStorage.setItem(ROLE_KEY,'ok'); }catch(err){} applyRole('admin'); };
+$('roleBtn').onclick=showGate;
+loadSong(); syncPrefsUI(); applyTheme(); renderCodePreview();
+(()=>{ let saved=null, ok=null; try{ saved=localStorage.getItem(ROLE_KEY); ok=sessionStorage.getItem(ROLE_KEY); }catch(e){}
+  if(saved==='member') applyRole('member',true);
+  else if(saved==='admin'&&ok==='ok') applyRole('admin',true);
+  else { setTab('practice'); showGate(); } })();
 </script>
 
 </body>
