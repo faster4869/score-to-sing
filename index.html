@@ -227,7 +227,7 @@ summary{cursor:pointer;font-weight:500}
 .gate-btn small{font-size:13px;opacity:.8;font-weight:400}
 .gate-card input[type=password]{padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--sunk);color:var(--ink);font-size:16px}
 .gate-err{color:var(--err);min-height:1em;margin:0}
-body.role-member #tabBtn-import,body.role-member #tabBtn-edit{display:none}
+body.role-member .tabs{display:none}
 body.role-member .exp-bar,body.role-member .exp-row input[type=checkbox],body.role-member .exp-row [data-act=dl],body.role-member .exp-row [data-act=copy],body.role-member .exp-note,body.role-member .exp-hint{display:none}
 body.role-member #sharedPanel{order:-1}
 body.role-member #myPanel{display:none}
@@ -635,9 +635,24 @@ body.role-member #myPanel{display:none}
         <h2 class="qe-title">我的曲子</h2>
         <span class="note exp-hint">可以改曲名、匯出或刪除。每首存成一個 .json 檔，放進 GitHub 的 <code>songs/</code> 資料夾，就會出現在團內曲庫</span>
       </div>
+      <details class="gh-set" id="ghSet">
+        <summary>GitHub 發布設定 <span class="tag" id="ghState">未設定</span></summary>
+        <div class="row" style="margin-top:8px">
+          <label class="field">帳號 <input id="ghOwner" type="text" autocomplete="off" placeholder="例如 faster4869"></label>
+          <label class="field">repo <input id="ghRepoIn" type="text" autocomplete="off" placeholder="例如 score-to-sing"></label>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label class="field">金鑰 <input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_…" style="min-width:18em"></label>
+          <button class="btn primary" id="ghSave" type="button">儲存並測試</button>
+          <button class="btn" id="ghClear" type="button">清除金鑰</button>
+          <span class="note" id="ghMsg" aria-live="polite"></span>
+        </div>
+        <p class="note">金鑰只存在這台裝置的瀏覽器裡，不會寫進網頁程式，團員拿不到。設定好後，每首歌後面會出現「發布」，按下去就直接更新團內曲庫，不用再下載、上傳。</p>
+      </details>
       <div class="row exp-bar">
         <label class="field"><input type="checkbox" id="expAll">全選</label>
-        <button class="btn primary" id="expSel" type="button" disabled>下載選取的</button>
+        <button class="btn primary" id="expPub" type="button" hidden disabled>發布選取的</button>
+        <button class="btn" id="expSel" type="button" disabled>下載選取的</button>
         <span class="note" id="expMsg" aria-live="polite"></span>
       </div>
       <div id="expList" class="exp-list"></div>
@@ -1022,7 +1037,7 @@ async function listShared(){
   // 1) songs/index.json if present (["a.json", ...] or {songs:[...]}), 2) GitHub's folder listing
   try{ const r=await fetch('songs/index.json',{cache:'no-cache'});
     if(r.ok){ const j=await r.json(); const a=(Array.isArray(j)?j:(j.songs||[])).map(x=>typeof x==='string'?x:x&&x.file).filter(Boolean); if(a.length) return a; } }catch(e){}
-  const gh=ghRepo();
+  const gh=(typeof ghCfg==='function'&&ghCfg().owner&&ghCfg().repo)?ghCfg():ghRepo();
   if(gh){ try{ const r=await fetch(`https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/songs`,{cache:'no-cache'});
     if(r.ok){ const j=await r.json(); if(Array.isArray(j)){ const fs=j.filter(x=>x.type==='file'&&/\.json$/i.test(x.name)&&x.name!=='index.json'); fs.forEach(x=>{ if(x.download_url) SHARED_RAW[x.name]=x.download_url; }); return fs.map(x=>x.name); } }
     else if(r.status===403) throw new Error('rate'); }catch(e){ if(e.message==='rate') return 'rate'; } }
@@ -1039,7 +1054,7 @@ async function loadShared(){
     if((!r||!r.ok)&&SHARED_RAW[f]) try{ r=await fetch(SHARED_RAW[f],{cache:'no-cache'}); }catch(e){}
     if(!r||!r.ok) return {file:f,bad:true,why:'網站還沒更新到這個檔案，請過 1～2 分鐘再按「重新整理」'};
     try{ const o=JSON.parse(await r.text()); if(!o||typeof o.text!=='string') throw 0; return {file:f,o}; }catch(e){ return {file:f,bad:true,why:'檔案格式不對，無法讀取'}; } }));
-  sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; if(typeof ROLE!=='undefined'&&ROLE==='member') autoUpdateShared(); renderShared();
+  sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; if(typeof ROLE!=='undefined'&&ROLE==='member'){ autoUpdateShared(); memberSync(); } renderShared();
 }
 // a song you imported yourself and then uploaded is the same song as the library copy: link them, merge duplicates
 const songSig=o=>JSON.stringify([String(o.title||''),o.clef,+o.key||0,+o.bpm||80,+o.startBar||0,o.ttsLang||'ja-JP',o.text||'']);
@@ -1069,6 +1084,21 @@ function autoUpdateShared(){
     Object.assign(local,f,{srcText:f.text,srcSig:ss}); local.clips=[...clipsOf(local).filter(c=>c.src==='local'),...sc]; PCACHE.delete(local.id); done.push(f.title); });
   if(done.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden) renderCards(); toast('已更新到團內曲庫的最新版：'+done.join('、')); }
 }
+// members simply have every song in the library: add new ones, drop removed ones
+function memberSync(){
+  const all=sharedCache||[]; const ok=all.filter(x=>!x.bad); if(!ok.length) return;
+  const added=[], removed=[], firstTime=!lib.songs.some(x=>x.src);
+  ok.forEach(it=>{ const src='songs/'+it.file; if(lib.songs.some(x=>x.src===src)) return;
+    const f=songFields(it.o); const sg=newSong({...f,practices:[],clips:sharedClips(it.o),src,srcText:f.text,srcSig:songSig(f)}); lib.songs.push(sg);
+    const prs=filePractices(it.o); if(prs.length) planAdd(sg,prs); else { const rg=songRange(sg); lib.plan.push({id:uid(),songId:sg.id,name:sg.title,from:rg?rg[0]:1,to:rg?rg[1]:1,...PR_DEF}); }
+    added.push(f.title); });
+  const listed=new Set(all.map(it=>'songs/'+it.file));
+  lib.songs.filter(x=>(x.src&&!listed.has(x.src))||(!x.src&&x.text===SAMPLE_TEXT)).forEach(x=>{ if(lib.songs.length<2) return;
+    lib.songs=lib.songs.filter(y=>y!==x); lib.plan=lib.plan.filter(p=>p.songId!==x.id); PCACHE.delete(x.id); if(x.src) removed.push(x.title); });
+  if(!songById(lib.current)) lib.current=lib.songs[0].id;
+  if(added.length||removed.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden) renderCards();
+    toast(firstTime&&added.length?`已載入團內曲庫的 ${added.length} 首歌，選一張卡片按播放就能開始練`:[added.length?'團內曲庫新增：'+added.join('、'):'',removed.length?'團內曲庫已移除：'+removed.join('、'):''].filter(Boolean).join('；')); }
+}
 function toast(t){ let el=$('toast'); if(!el){ el=document.createElement('div'); el.id='toast'; el.setAttribute('role','status'); document.body.append(el); } el.textContent=t; el.classList.add('on'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),6000); }
 function renderShared(){
   linkShared();
@@ -1082,6 +1112,9 @@ function renderShared(){
     const bars=(f.text.match(/\|/g)||[]).length;
     row.innerHTML=`<span class="sh-title">${esc(f.title)}</span><span class="sh-meta">${bars} 小節 · ♩=${f.bpm}</span><span class="sh-state${state==='有新版本'?' new':''}">${state}</span>
       <button class="btn${local?'':' primary'}" type="button">${!local?'載入':same?'開啟':'更新'}</button>${local?'<button class="btn danger sh-rm" type="button" title="從你的曲子裡移除（不影響團內曲庫）">移除</button>':''}`;
+    if(ROLE==='admin'&&ghReady()){ const db=document.createElement('button'); db.className='btn danger'; db.type='button'; db.textContent='從曲庫刪除'; db.title='把這首從 GitHub 的 songs/ 刪掉，團員就不會再看到'; row.append(db);
+      let a3=null; db.onclick=async()=>{ if(!a3){ db.textContent='再按一次刪除（團員也會看不到）'; a3=setTimeout(()=>{a3=null;db.textContent='從曲庫刪除';},4000); return; } clearTimeout(a3); db.disabled=true; db.textContent='刪除中…';
+        try{ await unpublish(it); $('sharedMsg').textContent=`已從曲庫刪除「${f.title}」`; }catch(err){ $('sharedMsg').textContent='刪除失敗：'+err.message; db.disabled=false; db.textContent='從曲庫刪除'; return; } loadShared(); renderExport(); }; }
     const btn=row.querySelector('button'); let armed=false;
     const rm=row.querySelector('.sh-rm'); if(rm){ let a2=null; rm.onclick=()=>{ if(!a2){ rm.textContent='再按一次移除'; a2=setTimeout(()=>{a2=null;rm.textContent='移除';},3000); return; } clearTimeout(a2); deleteSong(local.id); renderShared(); renderExport(); $('sharedMsg').textContent=`已移除「${f.title}」`; }; }
     btn.onclick=()=>{
@@ -1105,7 +1138,49 @@ function fileNameOf(sg){ return (sg.title||'song').replace(/[\\/:*?"<>|]/g,'_').
 function downloadSong(sg){ const blob=new Blob([exportText(sg)],{type:'application/json'}); const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=fileNameOf(sg); document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500); }
 const EXP_SEL=new Set();
+/* ---- publish straight to the GitHub repository (admin, with a personal token) ---- */
+const GH_KEY='seg-practice.gh';
+function ghCfg(){ let c={}; try{ c=JSON.parse(localStorage.getItem(GH_KEY)||'{}')||{}; }catch(e){} const d=ghRepo()||{}; return {owner:c.owner||d.owner||'',repo:c.repo||d.repo||'',token:c.token||'',ok:!!c.ok}; }
+const ghReady=()=>{ const c=ghCfg(); return !!(c.owner&&c.repo&&c.token&&c.ok); };
+const ghPath=p=>p.split('/').map(encodeURIComponent).join('/');
+function ghErr(st){ return st===401?'金鑰無效或已過期':st===403?'金鑰沒有寫入這個 repo 的權限':st===404?'找不到這個 repo（帳號、repo 名稱不對，或金鑰沒有包含這個 repo）':st===409||st===422?'檔案剛好被別人改過，請再試一次':'GitHub 回應錯誤（'+st+'）'; }
+async function ghApi(path,opt={}){ const c=ghCfg();
+  return fetch(`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}${path}`,{cache:'no-store',...opt,headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer '+c.token,...(opt.body?{'Content-Type':'application/json'}:{})}}); }
+function b64(u8){ let bin=''; for(let i=0;i<u8.length;i+=0x8000) bin+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000)); return btoa(bin); }
+async function ghSha(path){ const r=await ghApi('/contents/'+ghPath(path)); if(r.status===404) return null; if(!r.ok) throw new Error(ghErr(r.status)); return (await r.json()).sha; }
+async function ghPut(path,u8,msg){ const sha=await ghSha(path);
+  const r=await ghApi('/contents/'+ghPath(path),{method:'PUT',body:JSON.stringify({message:msg,content:b64(u8),...(sha?{sha}:{})})}); if(!r.ok) throw new Error(ghErr(r.status)); }
+async function ghDel(path,msg){ const sha=await ghSha(path); if(!sha) return;
+  const r=await ghApi('/contents/'+ghPath(path),{method:'DELETE',body:JSON.stringify({message:msg,sha})}); if(!r.ok) throw new Error(ghErr(r.status)); }
+async function publishSong(sg){
+  const path='songs/'+fileNameOf(sg);
+  for(const c of clipsOf(sg).filter(c=>c.src==='local')){ const rec=await AudioDB.get(c.id); if(rec) await ghPut('songs/'+c.file,new Uint8Array(await rec.blob.arrayBuffer()),'導讀錄音：'+sg.title); }
+  await ghPut(path,new TextEncoder().encode(exportText(sg)),(sg.src?'更新：':'發布：')+sg.title);
+  if(sg.src&&sg.src!==path){ try{ await ghDel(sg.src,'曲名改了，移除舊檔：'+sg.title); }catch(e){} }
+  sg.src=path; sg.srcText=sg.text; sg.srcSig=songSig(sg); saveLib(true);
+}
+async function unpublish(it){
+  for(const a of (Array.isArray(it.o.audio)?it.o.audio:[])) if(a&&a.file) try{ await ghDel('songs/'+a.file,'移除導讀錄音'); }catch(e){}
+  await ghDel('songs/'+it.file,'從曲庫刪除：'+(it.o.title||it.file));
+  const local=lib.songs.find(x=>x.src==='songs/'+it.file); if(local){ delete local.src; delete local.srcText; delete local.srcSig; saveLib(true); }
+}
+function syncGhUI(){ const c=ghCfg(); $('ghOwner').value=c.owner; $('ghRepoIn').value=c.repo; $('ghToken').value=c.token?'••••••••':'';
+  $('ghState').textContent=ghReady()?'已連線':'未設定'; $('ghState').classList.toggle('warn',!ghReady()); }
+$('ghSave').onclick=async()=>{ const old=ghCfg(); const tk=$('ghToken').value.trim(); const c={owner:$('ghOwner').value.trim(),repo:$('ghRepoIn').value.trim(),token:tk&&!/^•+$/.test(tk)?tk:old.token,ok:false};
+  if(!c.owner||!c.repo||!c.token){ $('ghMsg').textContent='請填好帳號、repo 和金鑰'; return; }
+  try{ localStorage.setItem(GH_KEY,JSON.stringify(c)); }catch(e){}
+  $('ghMsg').textContent='測試中…';
+  try{ const r=await ghApi(''); if(!r.ok) throw new Error(ghErr(r.status)); const j=await r.json();
+    if(j.permissions&&!j.permissions.push) throw new Error('這組金鑰只能讀、不能寫，請把 Contents 權限設成 Read and write');
+    c.ok=true; localStorage.setItem(GH_KEY,JSON.stringify(c)); $('ghMsg').textContent='連線成功，可以發布了'; }
+  catch(err){ $('ghMsg').textContent='連線失敗：'+err.message; }
+  syncGhUI(); renderExport(); if(sharedCache) renderShared(); };
+$('ghClear').onclick=()=>{ const c=ghCfg(); try{ localStorage.setItem(GH_KEY,JSON.stringify({owner:c.owner,repo:c.repo})); }catch(e){} $('ghMsg').textContent='已清除金鑰'; syncGhUI(); renderExport(); if(sharedCache) renderShared(); };
+$('expPub').onclick=async()=>{ const list=lib.songs.filter(x=>EXP_SEL.has(x.id)); let k=0;
+  for(const sg of list){ $('expMsg').textContent=`發布中… ${k}／${list.length}`; try{ await publishSong(sg); k++; }catch(err){ $('expMsg').textContent=`「${sg.title}」發布失敗：${err.message}`; renderExport(); return; } }
+  $('expMsg').textContent=`已發布 ${k} 首，團員重新打開網頁就會看到`; EXP_SEL.clear(); renderExport(); loadShared(); };
 function renderExport(){
+  syncGhUI();
   const box=$('expList'); box.innerHTML='';
   [...EXP_SEL].forEach(id=>{ if(!songById(id)) EXP_SEL.delete(id); });
   lib.songs.forEach(sg=>{
@@ -1113,9 +1188,11 @@ function renderExport(){
     const row=document.createElement('div'); row.className='exp-row';
     row.innerHTML=`<div class="exp-pick"><input type="checkbox"${EXP_SEL.has(sg.id)?' checked':''} aria-label="選取 ${esc(sg.title)}"><input class="name-in" type="text" value="${esc(sg.title||'')}" aria-label="曲名" title="可以直接改曲名"></div>
       <span class="sh-meta">${sg.src?(songModified(sg)?'<span class="tag warn" title="跟團內曲庫的版本不一樣，下載 .json 重新上傳後就會更新">有修改，尚未上傳</span> ':'<span class="tag">已在團內曲庫</span> '):''}${n} 小節 · ♩=${sg.bpm||80} · <code class="fn">${esc(fileNameOf(sg))}</code></span>
+      ${ghReady()&&(!sg.src||songModified(sg))?`<button class="btn primary" type="button" data-act="pub">${sg.src?'更新到曲庫':'發布到曲庫'}</button>`:''}
       <button class="btn" type="button" data-act="copy">複製文字</button>
-      <button class="btn primary" type="button" data-act="dl">下載 .json</button>
+      <button class="btn${ghReady()?'':' primary'}" type="button" data-act="dl">下載 .json</button>
       <button class="btn danger" type="button" data-act="del">刪除</button>`;
+    const pb=row.querySelector('[data-act=pub]'); if(pb) pb.onclick=async()=>{ pb.disabled=true; pb.textContent='發布中…'; try{ await publishSong(sg); $('expMsg').textContent=`已發布「${sg.title}」，團員重新打開網頁就會看到`; }catch(err){ $('expMsg').textContent='發布失敗：'+err.message; } renderExport(); loadShared(); };
     row.querySelector('.name-in').oninput=e=>{ sg.title=e.target.value; saveLib(); row.querySelector('.fn').textContent=fileNameOf(sg); };
     let armed=null; row.querySelector('[data-act=del]').onclick=e=>{ const b=e.currentTarget;
       if(!armed){ b.textContent='再按一次刪除'; armed=setTimeout(()=>{ armed=null; b.textContent='刪除'; },3000); return; }
@@ -1127,7 +1204,7 @@ function renderExport(){
   });
   syncExpBar();
 }
-function syncExpBar(){ const n=EXP_SEL.size; $('expSel').disabled=!n; $('expSel').textContent=n?`下載選取的 ${n} 首`:'下載選取的'; $('expAll').checked=n>0&&n===lib.songs.length; $('expAll').indeterminate=n>0&&n<lib.songs.length; }
+function syncExpBar(){ const n=EXP_SEL.size; $('expSel').disabled=!n; $('expPub').hidden=!ghReady(); $('expPub').disabled=!n; $('expPub').textContent=n?`發布選取的 ${n} 首`:'發布選取的'; $('expSel').textContent=n?`下載選取的 ${n} 首`:'下載選取的'; $('expAll').checked=n>0&&n===lib.songs.length; $('expAll').indeterminate=n>0&&n<lib.songs.length; }
 $('expAll').onchange=e=>{ EXP_SEL.clear(); if(e.target.checked) lib.songs.forEach(x=>EXP_SEL.add(x.id)); renderExport(); };
 $('expSel').onclick=async()=>{ const list=lib.songs.filter(x=>EXP_SEL.has(x.id)); let k=0;
   for(const sg of list){ try{ downloadSong(sg); k++; }catch(e){} $('expMsg').textContent=`下載中… ${k}／${list.length}`; await new Promise(r=>setTimeout(r,400)); }
@@ -1155,7 +1232,7 @@ $('impFile').onchange=async e=>{ const fs=[...e.target.files]; e.target.value=''
 $('impPaste').onclick=()=>{ $('impMsg').textContent=importData($('impText').value); $('impText').value=''; };
 
 function setTab(t){
-  if(typeof ROLE!=='undefined'&&ROLE==='member'&&(t==='import'||t==='edit')) t='practice';
+  if(typeof ROLE!=='undefined'&&ROLE==='member') t='practice';
   prefs.tab=t; savePrefs(); stopAll(); closeLyricSilently(); clearSel();
   ['import','edit','practice','export'].forEach(n=>{ const on=n===t; $('tab-'+n).hidden=!on; $('tab-'+n).style.display=on?'flex':'none'; $('tabBtn-'+n).setAttribute('aria-selected',on); });
   if(REV.on&&t!=='import') endReview();
@@ -3036,7 +3113,7 @@ function renderCards(){
   const list=$('plist'); list.innerHTML='';
   const before=lib.plan.length; lib.plan=lib.plan.filter(p=>songById(p.songId)); if(lib.plan.length!==before) saveLib();
   $('barRange').textContent='每張卡片可以選不同的曲子，一個頁面就能練完所有曲目';
-  if(!lib.plan.length){ list.innerHTML='<div class="empty-state">還沒有練習。先到「曲庫」分頁載入團內的歌，再按「新增練習」選好曲子和要練的小節。</div>'; return; }
+  if(!lib.plan.length){ list.innerHTML='<div class="empty-state">還沒有練習。按「新增練習」，選好曲子和要練的小節。</div>'; return; }
   lib.plan.forEach(pr=>list.append(practiceCard(pr)));
 }
 function practiceCard(pr){
@@ -3174,7 +3251,7 @@ function applyRole(r,first){
   ROLE=r; document.body.classList.toggle('role-member',r==='member'); document.body.classList.toggle('role-admin',r==='admin');
   $('roleBtn').textContent=r==='admin'?'管理員 · 切換身份':'團員 · 切換身份';
   $('roleGate').hidden=true;
-  if(r==='member'){ if(REV.on) endReview(); setTab(first&&prefs.tab==='export'?'export':'practice'); if(lib.songs.some(x=>x.src)&&!sharedCache) loadShared(); }
+  if(r==='member'){ if(REV.on) endReview(); setTab('practice'); if(!sharedCache) loadShared(); }
   else setTab(first&&['import','edit','practice','export'].includes(prefs.tab)?prefs.tab:'import');
 }
 function showGate(){ $('roleGate').hidden=false; $('gatePick').hidden=false; $('gatePass').hidden=true; $('gateErr').textContent=''; stopAll(); }
