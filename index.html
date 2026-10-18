@@ -243,6 +243,13 @@ body.role-member #myPanel{display:none}
 .card .order{display:flex;flex-direction:column;gap:2px}
 .mini .btn.on{background:var(--hot,#d93a2b);color:#1a1a1a;border-color:transparent}
 .card .order .btn{padding:0 6px;font-size:10px;line-height:16px}
+.mixer{flex-basis:100%}
+.mixer summary{cursor:pointer;color:var(--muted);font-size:14px}
+.mix-rows{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.mix-row{display:grid;grid-template-columns:minmax(7em,15em) minmax(110px,240px) 3.6em auto;align-items:center;gap:10px;justify-content:start}
+.mix-row .mix-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.mix-row input{width:100%}
+.mix-row b{font:600 13px var(--mono);min-width:3.2em}
 .card-opts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--line)}
 .card-opts .o-speedv{font:600 13px var(--mono);min-width:3.2em;display:inline-block}
 .card.collapsed .card-opts,.card.collapsed .roll-scroll{display:none}
@@ -811,7 +818,7 @@ function parseSong(sg){
 function reparse(){ P=parseSong(song()); }
 
 /* ================= audio ================= */
-let ctx,master;
+let ctx,master, OUT=null, LAYER_TB=null;
 function ensureCtx(){
   if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)(); master=ctx.createGain(); master.gain.value=.7;
     const comp=ctx.createDynamicsCompressor(); master.connect(comp).connect(ctx.destination);}
@@ -850,7 +857,7 @@ let noiseBuf=null;
 function noise(t,len,type,fq,q,gain){
   if(!noiseBuf){ noiseBuf=ctx.createBuffer(1,ctx.sampleRate*.3,ctx.sampleRate); const d=noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; }
   const src=ctx.createBufferSource(); src.buffer=noiseBuf; const f=ctx.createBiquadFilter(); f.type=type; f.frequency.value=fq; f.Q.value=q;
-  const g=ctx.createGain(); src.connect(f).connect(g).connect(master);
+  const g=ctx.createGain(); src.connect(f).connect(g).connect(OUT||master);
   g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(gain,t+.006); g.gain.setValueAtTime(gain,t+len*.6); g.gain.linearRampToValueAtTime(0,t+len);
   src.start(t); src.stop(t+len+.02); track(src);
 }
@@ -860,7 +867,7 @@ function singVoice(f,t0,dur,syl){
   const src=ctx.createOscillator(); src.type='sawtooth'; src.frequency.value=f;
   const lfo=ctx.createOscillator(); lfo.frequency.value=5.2; const lg=ctx.createGain();
   lg.gain.setValueAtTime(0,t0); lg.gain.linearRampToValueAtTime(f*.011,t0+Math.min(.45,dur*.6)); lfo.connect(lg).connect(src.frequency);
-  const out=ctx.createGain(); out.connect(master);
+  const out=ctx.createGain(); out.connect(OUT||master);
   const bands=[0,1,2].map(k=>{ const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=[5,8,10][k]; const g=ctx.createGain(); src.connect(bp).connect(g).connect(out); return {bp,g}; });
   const body=ctx.createBiquadFilter(); body.type='lowpass'; body.frequency.value=Math.max(300,f*2.2); const bg=ctx.createGain(); bg.gain.value=.18; src.connect(body).connect(bg).connect(out);
   const setForm=(vv,t,ramp)=>{ const F=FORM[vv], G=FGAIN[vv]; bands.forEach((b,k)=>{ if(ramp){ b.bp.frequency.linearRampToValueAtTime(F[k],t); b.g.gain.linearRampToValueAtTime(G[k],t); } else { b.bp.frequency.setValueAtTime(F[k],t); b.g.gain.setValueAtTime(G[k],t); } }); };
@@ -888,9 +895,9 @@ function singVoice(f,t0,dur,syl){
 }
 function voice(f,t0,dur,syl){
   // the score editor always uses piano; the timbre choice belongs to the practice tab
-  const tb=PLAY_OPT?PLAY_OPT.timbre:'piano';
+  const tb=LAYER_TB||(PLAY_OPT?PLAY_OPT.timbre:'piano');
   if(tb==='sing') return singVoice(f,t0,dur,syl);
-  const g=ctx.createGain(); g.connect(master); const end=t0+dur;
+  const g=ctx.createGain(); g.connect(OUT||master); const end=t0+dur;
   if(tb==='piano'){
     const o1=ctx.createOscillator(); o1.type='triangle'; o1.frequency.value=f;
     const o2=ctx.createOscillator(); o2.type='sine'; o2.frequency.value=f*2;
@@ -932,8 +939,10 @@ const PLAY_ICON='<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>', S
 function schedule(list,t0,withCount){
   const spb=60/bpmNow(); let t=t0; const timeline=[];
   if(withCount){for(let i=0;i<4;i++)click(t+i*spb,i===0); t+=4*spb;}
+  const gains={};
   list.forEach((s,k)=>{
     const base=t; const ns=s.items; let prevV='a';
+    if(s.ownVol!==undefined){ const g=ctx.createGain(); g.gain.value=s.ownVol/100; g.connect(master); gains.own=g; OUT=g; }
     for(let i=0;i<ns.length;i++){
       const it=ns[i]; const st=base+it.start*spb;
       timeline.push({el:it.el,card:s.card,st,en:st+it.dur*spb});
@@ -944,9 +953,16 @@ function schedule(list,t0,withCount){
       else syl={c:'',v:prevV};
       voice(freq(it.midi),st,d*spb*.97,syl);
     }
+    OUT=null;
+    // other parts of the same score, each through its own volume control
+    (s.layers||[]).forEach(L=>{ const g=ctx.createGain(); g.gain.value=L.vol/100; g.connect(master); gains[L.key]=g; OUT=g;
+      LAYER_TB=(PLAY_OPT&&PLAY_OPT.timbre==='sing')?'voice':null;
+      const ls=L.items; for(let i=0;i<ls.length;i++){ const it=ls[i]; if(it.rest||it.cont) continue; let d=it.dur,j=i; while(ls[j].tie&&ls[j+1]&&ls[j+1].cont){j++;d+=ls[j].dur;}
+        voice(freq(it.midi),base+it.start*spb,d*spb*.97,{c:'',v:'a'}); }
+      OUT=null; LAYER_TB=null; });
     t=base+s.beats*spb+(k<list.length-1?spb:0);
   });
-  return {timeline,endAt:t};
+  return {timeline,endAt:t,gains};
 }
 function playList(list,withCount=prefs.countin){
   stopAll(); ensureCtx();
@@ -974,7 +990,7 @@ function playList(list,withCount=prefs.countin){
       }
     }
     if(now>=play.endAt){
-      if(PLAY_OPT&&PLAY_OPT.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false); play.timeline=s.timeline; play.endAt=s.endAt;}
+      if(PLAY_OPT&&PLAY_OPT.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false); play.timeline=s.timeline; play.endAt=s.endAt; play.gains=s.gains;}
       else if(now>=play.endAt+.2){stopAll();return;}
     }
     play.raf=requestAnimationFrame(tick);
@@ -1059,7 +1075,7 @@ async function loadShared(){
   sharedCache=got; $('sharedMsg').textContent=`共 ${got.filter(x=>!x.bad).length} 首`; if(typeof ROLE!=='undefined'&&ROLE==='member'){ autoUpdateShared(); memberSync(); } renderShared();
 }
 // a song you imported yourself and then uploaded is the same song as the library copy: link them, merge duplicates
-const songSig=o=>JSON.stringify([String(o.title||''),o.clef,+o.key||0,+o.bpm||80,+o.startBar||0,o.ttsLang||'ja-JP',o.text||'']);
+const songSig=o=>JSON.stringify([String(o.title||''),o.clef,+o.key||0,+o.bpm||80,+o.startBar||0,o.ttsLang||'ja-JP',o.text||'',...((o.parts||[]).length?[(o.parts||[]).map(p=>[p.label,p.text])]:[])]);
 const songModified=sg=>!!sg.src&&(sg.srcSig?songSig(sg)!==sg.srcSig:sg.text!==sg.srcText);
 function linkShared(){
   let changed=false;
@@ -1135,7 +1151,7 @@ function renderShared(){
 }
 
 $('sharedReload').onclick=loadShared;
-function exportText(sg){ const s=sg||song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
+function exportText(sg){ const s=sg||song(); return JSON.stringify({format:'seg-practice',version:2,title:s.title,clef:s.clef,key:s.key,bpm:s.bpm,startBar:s.startBar,ttsLang:s.ttsLang||'ja-JP',text:s.text,parts:(s.parts||[]).map(({label,text,clef,startBar})=>({label,text,clef,startBar})),practices:lib.plan.filter(p=>p.songId===s.id).map(({name,from,to})=>({name,from,to})),audio:clipsOf(s).map(c=>({label:c.label,from:c.from||undefined,to:c.to||undefined,file:c.file}))},null,1); }
 function fileNameOf(sg){ return (sg.title||'song').replace(/[\\/:*?"<>|]/g,'_').trim()+'.json'; }
 function downloadSong(sg){ const blob=new Blob([exportText(sg)],{type:'application/json'}); const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=fileNameOf(sg); document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500); }
@@ -1243,7 +1259,8 @@ $('expSel').onclick=async()=>{ const list=lib.songs.filter(x=>EXP_SEL.has(x.id))
   $('expMsg').textContent=`已下載 ${k} 個檔案`; };
 function songFields(o){
   return {title:String(o.title||'匯入的曲子'),clef:['treble','treble8','bass'].includes(o.clef)?o.clef:'bass',key:Math.max(-7,Math.min(7,+o.key||0)),bpm:+o.bpm||80,
-    startBar:Number.isFinite(+o.startBar)?+o.startBar:1,ttsLang:TTS_LANGS[o.ttsLang]?o.ttsLang:'ja-JP',text:o.text};
+    startBar:Number.isFinite(+o.startBar)?+o.startBar:1,ttsLang:TTS_LANGS[o.ttsLang]?o.ttsLang:'ja-JP',text:o.text,
+    parts:(Array.isArray(o.parts)?o.parts:[]).filter(p=>p&&typeof p.text==='string').map((p,i)=>({id:'p'+i,label:String(p.label||('聲部 '+(i+1))),text:p.text,clef:['treble','treble8','bass'].includes(p.clef)?p.clef:undefined,startBar:Number.isFinite(+p.startBar)?+p.startBar:undefined}))};
 }
 const filePractices=o=>(o.practices||[]).map(p=>({id:uid(),name:String(p.name||'練習'),from:+p.from||1,to:+p.to||+p.from||1}));
 function importData(txt){
@@ -2124,7 +2141,8 @@ function mscxToMusicXml(text){
     if(!staves.length) return;
     const ins=kid(part,'Instrument'); const lab=kid(ins,'InstrumentLabel')||ins;
     const ln=mscxText(kid(lab,'longName'))||mscxText(kid(ins,'longName')), tn=kidText(part,'trackName')||kidText(ins,'trackName');
-    const name=(ln&&tn&&ln!==tn?`${ln}（${tn}）`:ln||tn)||('Part '+(pn+1));
+    const clean=x=>x&&!/^[?？\s]+$/.test(x)?x:'';
+    const name=((l,t)=>l&&t&&l!==t?`${l}（${t}）`:l||t)(clean(ln),clean(tn))||(staves.length>1?'伴奏':'聲部 '+(pn+1));
     pn++; const pid='P'+pn; let body='';
     const music=staves.map(s=>staffMusic[s._sid]).map(st=>st?kids(st,'Measure'):[]);
     const nMeas=Math.max(...music.map(m=>m.length));
@@ -2390,7 +2408,8 @@ $('xmlGo').onclick=()=>{
   try{
     const lf=+$('xmlLyrFrom').value; const bv=lf>=0?XML.voices[lf]:null;
     const r=xmlToSong(XML.doc,v,bv?{verse:(v.verses[0]||'1'),chord:$('xmlChord').value,borrow:bv,borrowVerse:$('xmlVerse').value}:{verse:$('xmlVerse').value,chord:$('xmlChord').value});
-    const s=newSong({title:$('xmlName').value.trim()||r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
+    const parts=[]; XML.voices.forEach(o=>{ if(o===v||o.notes<8) return; try{ const pr=xmlToSong(XML.doc,o,{verse:o.verses[0]||'1',chord:$('xmlChord').value}); parts.push({id:'p'+parts.length,label:o.label,text:pr.text.split('\n').filter(l=>/\|/.test(l)||/^\s*@/.test(l)).join('\n'),clef:pr.clef,startBar:pr.startBar}); }catch(e){} });
+    const s=newSong({parts,title:$('xmlName').value.trim()||r.title,clef:r.clef,key:r.key,bpm:r.bpm,startBar:r.startBar,ttsLang:r.ttsLang,text:r.text});
     lib.songs.push(s); lib.current=s.id; planAdd(s,s.practices); saveLib(true); stopAll(); loadSong(); syncKeySel();
     $('xmlBox').hidden=true; XML=null;
     impStatus(`已建立「${s.title}」：${r.bars} 小節${r.anyLyric?'，含歌詞':''}。這類檔案是精確的樂譜資料，不需要校對（逐小節校對只用在掃描 PDF／圖片）。有反覆記號的話，是照譜面寫法匯入、沒有展開。`);
@@ -3152,8 +3171,17 @@ function practiceSeg(pr,card){
   const t0=Q.bars[from]&&Q.bars[from].start!=null?Math.min(Q.bars[from].start,ev[0].start):ev[0].start;
   const items=ev.map((e,i)=>({...e,start:e.start-t0,cont:i===0?false:e.cont}));
   const endB=Q.bars[to]&&Q.bars[to].end!=null?Q.bars[to].end-t0:Math.max(...items.map(x=>x.start+x.dur));
-  return {items,beats:endB,card,song:sg,opt:{speed:pr.speed||100,trans:pr.trans||0,timbre:pr.timbre||'piano',loop:!!pr.loop},lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
+  const mix=pr.mix||{}; const layers=[];
+  layerList(pr,sg).forEach(L=>{ const v=+(mix[L.key]||0); if(v<=0) return; const its=cutItems(parsedOf(L.src()),from,to); if(its) layers.push({key:L.key,vol:v,items:its}); });
+  return {items,beats:endB,card,song:sg,layers,ownVol:mix.own!==undefined?+mix.own:100,opt:{speed:pr.speed||100,trans:pr.trans||0,timbre:pr.timbre||'piano',loop:!!pr.loop},lyrics:items.filter(x=>x.lyric).map(x=>x.lyric).join('')};
 }
+function partSong(sg,pt){ return {id:sg.id+'#'+pt.id,text:pt.text||'',key:sg.key,clef:pt.clef||sg.clef,startBar:pt.startBar!==undefined?pt.startBar:sg.startBar}; }
+function cutItems(Q,from,to){ const ev=Q.events.filter(e=>e.bar>=from&&e.bar<=to); if(!ev.length) return null;
+  const t0=Q.bars[from]&&Q.bars[from].start!=null?Math.min(Q.bars[from].start,ev[0].start):ev[0].start;
+  return ev.map((e,i)=>({...e,start:e.start-t0,cont:i===0?false:e.cont})); }
+function layerList(pr,sg){ const out=[]; (sg.parts||[]).forEach(pt=>out.push({key:'p:'+pt.id,label:pt.label,src:()=>partSong(sg,pt)}));
+  Object.keys(pr.mix||{}).filter(k=>k.startsWith('s:')).forEach(k=>{ const o=songById(k.slice(2)); if(o&&o.id!==sg.id) out.push({key:k,label:o.title,src:()=>o,extra:true}); });
+  return out; }
 function songRange(sg){ const Q=parsedOf(sg); return Q.barNums.length?[Q.barNums[0],Q.barNums[Q.barNums.length-1]]:null; }
 function renderPractice(){ renderCards(); }
 function renderCards(){
@@ -3187,9 +3215,26 @@ function practiceCard(pr){
       <label class="field">移調 <select class="o-trans">${TRANS_OPTS}</select></label>
       <div class="field">音色 <div class="seg o-timbre"><button type="button" data-v="piano">鋼琴</button><button type="button" data-v="voice">人聲</button><button type="button" data-v="sing" title="母音跟著歌詞變化的哼唱">哼唱</button></div></div>
       <label class="field"><input class="o-loop" type="checkbox"${pr.loop?' checked':''}>反覆</label>
+      <details class="mixer"${Object.values(pr.mix||{}).some(v=>v>0&&v!==100)?' open':''}><summary>聲部音量${(sg.parts||[]).length?`（還有 ${(sg.parts||[]).length} 個聲部）`:''}</summary><div class="mix-rows"></div></details>
     </div>
     <div class="roll-scroll"><div class="roll"></div></div>`;
   card.querySelector('.o-trans').value=pr.trans||0;
+  { const box=card.querySelector('.mix-rows'); const mix=pr.mix||{};
+    const row=(key,label,val,extra)=>{ const d=document.createElement('div'); d.className='mix-row';
+      d.innerHTML=`<span class="mix-name">${esc(label)}</span><input type="range" min="0" max="100" step="5" value="${val}" aria-label="${esc(label)} 音量"><b>${val}%</b>${extra?'<button class="btn sm" type="button" title="拿掉這個聲部">✕</button>':''}`;
+      const inp=d.querySelector('input'), lab=d.querySelector('b');
+      inp.oninput=()=>{ const v=+inp.value; lab.textContent=v+'%'; pr.mix=pr.mix||{}; const was=+(pr.mix[key]||0); pr.mix[key]=v; saveLib();
+        if(card.classList.contains('active')&&play){ const g=play.gains&&play.gains[key]; if(g) g.gain.value=v/100; else if(v>0&&was<=0){ stopAll(); } } seg=practiceSeg(pr,card); };
+      if(extra) d.querySelector('button').onclick=()=>{ delete pr.mix[key]; saveLib(); if(card.classList.contains('active')) stopAll(); card.replaceWith(practiceCard(pr)); };
+      box.append(d); };
+    row('own','我的聲部',mix.own!==undefined?mix.own:100);
+    layerList(pr,sg).forEach(L=>row(L.key,L.label,+(mix[L.key]||0),L.extra));
+    const others=lib.songs.filter(x=>x.id!==sg.id&&!(('s:'+x.id) in mix));
+    if(others.length){ const add=document.createElement('label'); add.className='field mix-add'; add.innerHTML=`加入另一首當聲部 <select><option value="">選擇曲子…</option>${others.map(x=>`<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select>`;
+      add.querySelector('select').onchange=e=>{ if(!e.target.value) return; pr.mix=pr.mix||{}; pr.mix['s:'+e.target.value]=50; saveLib(); if(card.classList.contains('active')) stopAll(); const nc=practiceCard(pr); nc.querySelector('.mixer').open=true; card.replaceWith(nc); };
+      box.append(add); }
+    if(!(sg.parts||[]).length) { const n=document.createElement('p'); n.className='note'; n.textContent='這首只有你的聲部。用 MusicXML／MuseScore 匯入的歌會自動帶入其他聲部；掃描的歌可以把其他聲部各掃一次，再用「加入另一首當聲部」疊在一起（小節號要一致）。'; box.append(n); }
+  }
   const syncTb=()=>card.querySelectorAll('.o-timbre button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===(pr.timbre||'piano'))); syncTb();
   card.querySelectorAll('[data-clip]').forEach(btn=>{ const c=clipsFor(pr)[+btn.dataset.clip]; btn.onclick=()=>playClip(c,btn,pr.speed); });
   let seg=null;
