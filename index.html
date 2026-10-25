@@ -3380,6 +3380,23 @@ async function revDraw(){
   REV.view={segs,z};
 }
 // click on the original to add a missing note there
+/* Where in the bar a tap at X belongs. The scan's marks may no longer match the bar after edits
+   (a wrongly found rest deleted, a note added), so line the current notes up with the marks by their codes
+   and place each note at its mark; notes without a match sit between their neighbours. */
+function insertIndexAt(m,ts,X){
+  const mk=(m.marks||[]).filter(k=>k.t!=='c').slice().sort((a,b)=>a.x-b.x);
+  if(!ts.length) return 0;
+  const norm=c=>String(c||'').replace(/[~#bn]/g,'');
+  const A=ts.map(x=>norm(tokCode(x.t))), B=mk.map(k=>norm(k.l));
+  const L=Array.from({length:A.length+1},()=>new Int16Array(B.length+1));
+  for(let i=A.length-1;i>=0;i--) for(let j=B.length-1;j>=0;j--) L[i][j]=A[i]===B[j]?L[i+1][j+1]+1:Math.max(L[i+1][j],L[i][j+1]);
+  const xs=new Array(A.length).fill(null); for(let i=0,j=0;i<A.length&&j<B.length;){ if(A[i]===B[j]){ xs[i]=mk[j].x; i++; j++; } else if(L[i+1][j]>=L[i][j+1]) i++; else j++; }
+  // fill the gaps by spreading the unmatched notes evenly between matched ones (or the bar edges)
+  const x0=m.x0, x1=m.x1;
+  for(let i=0;i<xs.length;){ if(xs[i]!==null){ i++; continue; } let j=i; while(j<xs.length&&xs[j]===null) j++;
+    const lo=i>0?xs[i-1]:x0, hi=j<xs.length?xs[j]:x1; for(let k=i;k<j;k++) xs[k]=lo+(hi-lo)*(k-i+1)/(j-i+1); i=j; }
+  return xs.filter(x=>x<X).length;
+}
 $('revCanvas').addEventListener('click',e=>{
   const v=REV.view; if(!v) return; const r=e.currentTarget.getBoundingClientRect();
   const cx=(e.clientX-r.left)*(e.currentTarget.width/r.width), Y=(e.clientY-r.top)*(e.currentTarget.height/r.height)/v.z;
@@ -3387,7 +3404,7 @@ $('revCanvas').addEventListener('click',e=>{
   const X=(cx-g.ox)/v.z+g.sx0;
   const m=g.ms.length>1?(g.ms.find(m=>X<m.x1)||g.ms[g.ms.length-1]):g.ms[0];
   const p=Math.round((g.sp.sBot-Y)/(g.sp.sS/2)); if(REV.ins!=='rest'&&(p<MINP||p>MAXP)) return;
-  const ts=barToks(m.n); const before=(m.marks||[]).filter(k=>k.t!=='c'&&k.x<X).length;
+  const ts=barToks(m.n); const before=insertIndexAt(m,ts,X);
   let pos; if(ts.length){ pos=before<ts.length?ts[before].t.s:ts[ts.length-1].t.e; } else if(P.bars[m.n]&&P.bars[m.n].pos!==undefined) pos=P.bars[m.n].pos; else return;
   const {L,oct}=pitchAt(Math.max(MINP,Math.min(MAXP,p))); caretTouched=true; $('src').setSelectionRange(pos,pos); lastCaret=pos;
   if(REV.ins==='rest') insertToken('R/'+prefs.qdur); else { insertToken(L+oct+'/'+prefs.qdur); ensureCtx(); voice(freq((oct+1)*12+STEPS[L]+keyAcc(L,song().key)),ctx.currentTime+.01,.35); }
