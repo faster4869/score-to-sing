@@ -286,6 +286,8 @@ body.role-member #myPanel{display:none}
 .col.on .ly{color:var(--hot)}
 .col.rest .lane{background:none}
 .col.rest .ly{color:var(--line);font-size:13px}
+.col.rest.on .ly{color:var(--hot)} .col.rest.on .lane{background:color-mix(in srgb,var(--hot) 14%,transparent)}
+.playhead{position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--hot);pointer-events:none;z-index:2;will-change:transform}
 .barmark{flex:none;position:relative;width:0;border-left:1px solid var(--muted);margin:0 4px;height:104px;opacity:.7}
 .barmark span{position:absolute;top:-17px;left:3px;font:500 11px var(--mono);color:var(--muted)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -959,7 +961,7 @@ function stopAll(){
   if(typeof stopGuide==='function') stopGuide();
   if(play){cancelAnimationFrame(play.raf); clearInterval(play.pump); play=null;} if(master&&ctx) master.gain.setValueAtTime(.7,ctx.currentTime); PLAY_SONG=null; PLAY_OPT=null; if(typeof speakStop==='function'&&SPEAK_BTN) speakStop();
   live.forEach(n=>{try{n.stop();}catch(e){}}); live.clear();
-  document.querySelectorAll('.col.on,#staff g.on').forEach(e=>e.classList.remove('on'));
+  document.querySelectorAll('.col.on,#staff g.on').forEach(e=>e.classList.remove('on')); document.querySelectorAll('.playhead').forEach(e=>e.remove());
   document.querySelectorAll('.card.playing').forEach(e=>e.classList.remove('playing'));
   document.querySelectorAll('.card.active').forEach(e=>{ e.classList.remove('active'); const b=e.querySelector('.play'); if(b){ b.innerHTML=PLAY_ICON; b.setAttribute('aria-label','播放'); } });
 }
@@ -1028,8 +1030,15 @@ function playList(list,withCount=prefs.countin){
         if(e.el.closest('#scoreScroll')){ const sc=$('scoreScroll'), r=e.el.getBoundingClientRect(), cr=sc.getBoundingClientRect();
           if(r.top<cr.top+10||r.bottom>cr.bottom-10) sc.scrollTop+=r.top-cr.top-40;
           if(r.left<cr.left+10||r.right>cr.right-10) sc.scrollLeft+=r.left-cr.left-80; }
-        const rs=e.el.closest('.roll-scroll'); if(rs){ const x=e.el.offsetLeft; if(x<rs.scrollLeft+20||x>rs.scrollLeft+rs.clientWidth-80) rs.scrollLeft=x-60; } }
+      }
     }
+    // a line that glides across the card's notes, and keeps itself (with the lyrics under it) in view, also through rests and long notes
+    let cur=null; nowOn.forEach(e=>{ if(e.el&&e.el.parentElement&&e.el.parentElement.classList.contains('roll')&&(!cur||e.st>cur.st)) cur=e; });
+    if(cur){ const roll=cur.el.parentElement, rs=roll.parentElement;
+      let ph=play.head; if(!ph||ph.parentElement!==roll){ if(ph) ph.remove(); ph=document.createElement('div'); ph.className='playhead'; roll.append(ph); play.head=ph; }
+      const x=cur.el.offsetLeft+Math.min(1,Math.max(0,(now-cur.st)/(cur.en-cur.st)))*cur.el.offsetWidth; ph.style.transform=`translateX(${x}px)`;
+      if(rs&&rs.classList.contains('roll-scroll')){ const vw=Math.min(rs.clientWidth,window.visualViewport?window.visualViewport.width:rs.clientWidth);
+        if(x<rs.scrollLeft+10||x>rs.scrollLeft+vw*0.75) rs.scrollLeft=Math.max(0,x-vw*0.25); } }
     play.on.forEach(e=>{ if(!nowOn.has(e)&&e.el) e.el.classList.remove('on'); }); play.on=nowOn;
     if(now>=play.endAt){
       if(PLAY_OPT&&PLAY_OPT.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false,play.gains);
@@ -1143,7 +1152,7 @@ function autoUpdateShared(){
     const f=songFields(it.o), ss=songSig(f), sc=sharedClips(it.o);
     if(local.srcSig===ss&&songSig(local)===ss&&aSig(clipsOf(local).filter(c=>c.src==='shared'))===aSig(sc)) return;
     Object.assign(local,f,{srcText:f.text,srcSig:ss}); local.clips=[...clipsOf(local).filter(c=>c.src==='local'),...sc]; PCACHE.delete(local.id); done.push(f.title); });
-  if(done.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden) renderCards(); toast('已更新到團內曲庫的最新版：'+done.join('、')); }
+  if(done.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden&&!play) renderCards(); toast('已更新到團內曲庫的最新版：'+done.join('、')); }
 }
 // members simply have every song in the library: add new ones, drop removed ones
 function memberSync(){
@@ -1157,7 +1166,7 @@ function memberSync(){
   lib.songs.filter(x=>(x.src&&!listed.has(x.src))||(!x.src&&x.text===SAMPLE_TEXT)).forEach(x=>{ if(lib.songs.length<2) return;
     lib.songs=lib.songs.filter(y=>y!==x); lib.plan=lib.plan.filter(p=>p.songId!==x.id); PCACHE.delete(x.id); if(x.src) removed.push(x.title); });
   if(!songById(lib.current)) lib.current=lib.songs[0].id;
-  if(added.length||removed.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden) renderCards();
+  if(added.length||removed.length){ saveLib(true); loadSong(); if(!$('tab-practice').hidden&&!play) renderCards();
     toast(firstTime&&added.length?`已載入團內曲庫的 ${added.length} 首歌，選一張卡片按播放就能開始練`:[added.length?'團內曲庫新增：'+added.join('、'):'',removed.length?'團內曲庫已移除：'+removed.join('、'):''].filter(Boolean).join('；')); }
 }
 function toast(t){ let el=$('toast'); if(!el){ el=document.createElement('div'); el.id='toast'; el.setAttribute('role','status'); document.body.append(el); } el.textContent=t; el.classList.add('on'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),6000); }
@@ -3466,6 +3475,7 @@ function layerList(pr,sg){ const out=[]; const byG=new Map();
 function songRange(sg){ const Q=parsedOf(sg); return Q.barNums.length?[Q.barNums[0],Q.barNums[Q.barNums.length-1]]:null; }
 function renderPractice(){ renderCards(); }
 function renderCards(){
+  if(play&&document.querySelector('#plist .card.active')) stopAll(); // the cards are rebuilt: a running card would keep playing with nothing on screen following it
   const list=$('plist'); list.innerHTML='';
   const before=lib.plan.length; lib.plan=lib.plan.filter(p=>songById(p.songId)); if(lib.plan.length!==before) saveLib();
   $('barRange').textContent='每張卡片可以選不同的曲子，一個頁面就能練完所有曲目';
@@ -3505,7 +3515,8 @@ function practiceCard(pr){
       d.innerHTML=`<span class="mix-name">${esc(label)}</span><input type="range" min="0" max="100" step="5" value="${val}" aria-label="${esc(label)} 音量"><b>${val}%</b>${extra?'<button class="btn sm" type="button" title="拿掉這個聲部">✕</button>':''}`;
       const inp=d.querySelector('input'), lab=d.querySelector('b');
       inp.oninput=()=>{ const v=+inp.value; lab.textContent=v+'%'; pr.mix=pr.mix||{}; const was=+(pr.mix[key]||0); pr.mix[key]=v; saveLib();
-        if(card.classList.contains('active')&&play){ const g=play.gains&&play.gains[key]; if(g) g.gain.value=v/100; else if(v>0&&was<=0){ stopAll(); } } seg=practiceSeg(pr,card); };
+        if(card.classList.contains('active')&&play){ const g=play.gains&&play.gains[key]; if(g) g.gain.value=v/100; else if(v>0&&was<=0){ stopAll(); } } { const old=seg; seg=practiceSeg(pr,card); // keep the notes on screen linked, so the next play still lights them and scrolls
+          if(old&&seg&&old.items.length===seg.items.length) seg.items.forEach((it,i)=>{ it.el=old.items[i].el; }); else build(); } };
       if(extra) d.querySelector('button').onclick=()=>{ delete pr.mix[key]; saveLib(); if(card.classList.contains('active')) stopAll(); card.replaceWith(practiceCard(pr)); };
       box.append(d); };
     row('own','我的聲部',mix.own!==undefined?mix.own:100);
