@@ -957,20 +957,23 @@ const bpmNow=()=>Math.max(20,(+(PLAY_SONG||song()).bpm||80)*(PLAY_OPT?PLAY_OPT.s
 let play=null;
 function stopAll(){
   if(typeof stopGuide==='function') stopGuide();
-  if(play){cancelAnimationFrame(play.raf); play=null;} PLAY_SONG=null; PLAY_OPT=null; if(typeof speakStop==='function'&&SPEAK_BTN) speakStop();
+  if(play){cancelAnimationFrame(play.raf); clearInterval(play.pump); play=null;} if(master&&ctx) master.gain.setValueAtTime(.7,ctx.currentTime); PLAY_SONG=null; PLAY_OPT=null; if(typeof speakStop==='function'&&SPEAK_BTN) speakStop();
   live.forEach(n=>{try{n.stop();}catch(e){}}); live.clear();
   document.querySelectorAll('.col.on,#staff g.on').forEach(e=>e.classList.remove('on'));
   document.querySelectorAll('.card.playing').forEach(e=>e.classList.remove('playing'));
   document.querySelectorAll('.card.active').forEach(e=>{ e.classList.remove('active'); const b=e.querySelector('.play'); if(b){ b.innerHTML=PLAY_ICON; b.setAttribute('aria-label','播放'); } });
 }
 const PLAY_ICON='<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>', STOP_ICON='<svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>';
-function schedule(list,t0,withCount){
-  const spb=60/bpmNow(); let t=t0; const timeline=[];
-  if(withCount){for(let i=0;i<4;i++)click(t+i*spb,i===0); t+=4*spb;}
+/* Notes are only turned into sound nodes a moment before they play. Building every note of a long song
+   (and of the other parts) up front left thousands of live filters in the audio graph, which made phones crackle and stall. */
+function schedule(list,t0,withCount,reuse){
+  const spb=60/bpmNow(); let t=t0; const timeline=[], ev=[];
+  if(withCount){for(let i=0;i<4;i++) ev.push({t:t+i*spb,click:true,acc:i===0}); t+=4*spb;}
   const gains={};
+  const gainFor=(key,vol)=>{ if(reuse&&reuse[key]){ gains[key]=reuse[key]; return reuse[key]; } const g=ctx.createGain(); g.gain.value=vol/100; g.connect(master); gains[key]=g; return g; };
   list.forEach((s,k)=>{
     const base=t; const ns=s.items; let prevV='a';
-    if(s.ownVol!==undefined){ const g=ctx.createGain(); g.gain.value=s.ownVol/100; g.connect(master); gains.own=g; OUT=g; }
+    const own=s.ownVol!==undefined?gainFor('own',s.ownVol):null;
     for(let i=0;i<ns.length;i++){
       const it=ns[i]; const st=base+it.start*spb;
       timeline.push({el:it.el,card:s.card,st,en:st+it.dur*spb});
@@ -979,46 +982,58 @@ function schedule(list,t0,withCount){
       let syl;
       if(it.lyric){ syl=parseSyl(it.lyric,prevV); if(syl&&syl.v!=='-'&&syl.v!=='n') prevV=syl.v; }
       else syl={c:'',v:prevV};
-      voice(freq(it.midi),st,d*spb*.97,syl);
+      ev.push({t:st,f:freq(it.midi),d:d*spb*.97,syl,out:own,tb:null});
     }
-    OUT=null;
     // other parts of the same score, each through its own volume control
-    (s.layers||[]).forEach(L=>{ const g=ctx.createGain(); g.gain.value=L.vol/100; g.connect(master); gains[L.key]=g; OUT=g;
-      LAYER_TB=(PLAY_OPT&&PLAY_OPT.timbre==='sing')?'voice':null;
+    (s.layers||[]).forEach(L=>{ const g=gainFor(L.key,L.vol); const tb=(PLAY_OPT&&PLAY_OPT.timbre==='sing')?'voice':null;
       const ls=L.items; for(let i=0;i<ls.length;i++){ const it=ls[i]; if(it.rest||it.cont) continue; let d=it.dur,j=i; while(ls[j].tie&&ls[j+1]&&ls[j+1].cont){j++;d+=ls[j].dur;}
-        voice(freq(it.midi),base+it.start*spb,d*spb*.97,{c:'',v:'a'}); }
-      OUT=null; LAYER_TB=null; });
+        ev.push({t:base+it.start*spb,f:freq(it.midi),d:d*spb*.97,syl:{c:'',v:'a'},out:g,tb}); } });
     t=base+s.beats*spb+(k<list.length-1?spb:0);
   });
-  return {timeline,endAt:t,gains};
+  ev.sort((a,b)=>a.t-b.t); timeline.sort((a,b)=>a.st-b.st);
+  return {timeline,endAt:t,gains,ev};
+}
+function pumpNotes(){
+  if(!play||!ctx) return;
+  const now=ctx.currentTime, lim=now+(document.hidden?2.5:0.6);
+  while(play.ei<play.ev.length&&play.ev[play.ei].t<lim){ const e=play.ev[play.ei++];
+    if(e.t<now-0.03) continue; // fell behind (tab was asleep): skip rather than pile notes up
+    if(e.click){ click(e.t,e.acc); continue; }
+    OUT=e.out; LAYER_TB=e.tb; voice(e.f,e.t,e.d,e.syl); OUT=null; LAYER_TB=null; }
 }
 function playList(list,withCount=prefs.countin){
   stopAll(); ensureCtx();
   const good=list.filter(s=>s&&s.items.some(x=>!x.rest));
   if(!good.length) return;
   PLAY_SONG=good[0].song||null; PLAY_OPT=good[0].opt||null;
-  const sch=schedule(good,ctx.currentTime+.08,withCount);
-  play={list:good,...sch,raf:0};
+  // several parts at once add up: keep the sum below clipping
+  const parts=1+Math.max(0,...good.map(s=>(s.layers||[]).filter(L=>L.vol>0).length));
+  master.gain.setValueAtTime(Math.max(.3,.7/Math.sqrt(parts)),ctx.currentTime);
+  const sch=schedule(good,ctx.currentTime+.12,withCount);
+  play={list:good,...sch,ei:0,ti:0,on:new Set(),raf:0};
+  pumpNotes(); play.pump=setInterval(pumpNotes,50);
   const tick=()=>{
     if(!play) return;
-    const now=ctx.currentTime;
-    for(const e of play.timeline){
-      const on=now>=e.st&&now<e.en; if(e.el) e.el.classList.toggle('on',on);
-      if(on&&e.card&&!e.card.classList.contains('playing')){
+    const now=ctx.currentTime, tl=play.timeline;
+    // only look at the few notes around now instead of the whole song every frame
+    while(play.ti<tl.length&&tl[play.ti].en<=now) play.ti++;
+    const nowOn=new Set();
+    for(let k=play.ti;k<tl.length&&tl[k].st<=now;k++){ const e=tl[k]; if(now>=e.en) continue; nowOn.add(e);
+      if(e.el&&!play.on.has(e)) e.el.classList.add('on');
+      if(e.card&&!e.card.classList.contains('playing')){
         document.querySelectorAll('.card.playing').forEach(c=>c.classList.remove('playing'));
         e.card.classList.add('playing');
       }
-      if(on&&e.el&&e.el.closest&&e.el.closest('#scoreScroll')&&!e.shown){ e.shown=true;
-        const sc=$('scoreScroll'), r=e.el.getBoundingClientRect(), cr=sc.getBoundingClientRect();
-        if(r.top<cr.top+10||r.bottom>cr.bottom-10) sc.scrollTop+=r.top-cr.top-40;
-        if(r.left<cr.left+10||r.right>cr.right-10) sc.scrollLeft+=r.left-cr.left-80; }
-      if(on&&e.el&&e.el.scrollIntoView&&e.el.closest('.roll-scroll')){
-        const sc=e.el.closest('.roll-scroll'); const x=e.el.offsetLeft;
-        if(x<sc.scrollLeft+20||x>sc.scrollLeft+sc.clientWidth-80) sc.scrollLeft=x-60;
-      }
+      if(e.el&&!e.shown&&e.el.closest){ e.shown=true;
+        if(e.el.closest('#scoreScroll')){ const sc=$('scoreScroll'), r=e.el.getBoundingClientRect(), cr=sc.getBoundingClientRect();
+          if(r.top<cr.top+10||r.bottom>cr.bottom-10) sc.scrollTop+=r.top-cr.top-40;
+          if(r.left<cr.left+10||r.right>cr.right-10) sc.scrollLeft+=r.left-cr.left-80; }
+        const rs=e.el.closest('.roll-scroll'); if(rs){ const x=e.el.offsetLeft; if(x<rs.scrollLeft+20||x>rs.scrollLeft+rs.clientWidth-80) rs.scrollLeft=x-60; } }
     }
+    play.on.forEach(e=>{ if(!nowOn.has(e)&&e.el) e.el.classList.remove('on'); }); play.on=nowOn;
     if(now>=play.endAt){
-      if(PLAY_OPT&&PLAY_OPT.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false); play.timeline=s.timeline; play.endAt=s.endAt; play.gains=s.gains;}
+      if(PLAY_OPT&&PLAY_OPT.loop){const s=schedule(play.list,play.endAt+60/bpmNow(),false,play.gains);
+        play.timeline=s.timeline; play.ti=0; play.endAt=s.endAt; play.gains=s.gains; play.ev=s.ev; play.ei=0; play.timeline.forEach(e=>{e.shown=false;}); pumpNotes();}
       else if(now>=play.endAt+.2){stopAll();return;}
     }
     play.raf=requestAnimationFrame(tick);
