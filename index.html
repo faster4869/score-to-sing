@@ -137,6 +137,9 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 #scanSvg .st.pick{fill:rgba(251,85,51,.18);stroke:#FB5533;stroke-width:5}
 #scanSvg .st.guess{fill:rgba(245,197,66,.25);stroke:#D99A00;stroke-width:5;stroke-dasharray:14 8}
 #scanSvg .sysbox{fill:transparent;stroke:none}
+#scanSvg .sysrest{fill:rgba(120,130,145,.18);stroke:#8a96a3;stroke-width:4;pointer-events:none}
+#scanSvg .sysrest.unsure{fill:rgba(245,197,66,.28);stroke:#D99A00;stroke-dasharray:14 8}
+#scanSvg .sysrest-t{fill:#8a5a00;font-weight:800;pointer-events:none;stroke:#fff;stroke-width:6px;paint-order:stroke;stroke-linejoin:round}
 #scanSvg .sysbox.unsure{fill:rgba(245,197,66,.55)}
 .strip-list{display:flex;flex-direction:column;gap:6px;max-height:320px;min-height:120px;overflow:auto;resize:vertical;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
 .strip{position:relative;width:100%;max-width:1400px}
@@ -469,6 +472,7 @@ body.role-member #myPanel{display:none}
           <button class="btn" type="button" data-r="~" title="鍵盤 ~">連結線</button>
           <button class="btn" type="button" data-r="0" title="鍵盤 0">改成休止符</button>
           <button class="btn danger" type="button" data-r="Delete" title="Delete">刪除</button>
+          <button class="btn" type="button" data-r="barrest" title="鋼琴前奏、間奏這種你不用唱的小節：把整小節換成休止符">整小節改休止</button>
         </div>
         <div class="row">
           <button class="btn" id="revPrev" type="button" title="Shift+Enter">◀ 上一個</button>
@@ -1621,6 +1625,20 @@ document.addEventListener('keydown',e=>{
   if(!map[e.key]) return;
   e.preventDefault(); editTargets(map[e.key],targets);
 });
+/* a bar the singer doesn't sing (piano intro, interlude): swap everything in it for rests of a normal bar's length */
+function commonBarLen(){ const lens={}; P.barNums.forEach(n=>{ const b=P.bars[n]; if(b&&b.end!==undefined){ const L=+(b.end-b.start).toFixed(3); if(L>0) lens[L]=(lens[L]||0)+1; } });
+  const best=Object.entries(lens).sort((a,b)=>b[1]-a[1])[0]; return best?+best[0]:4; }
+function restCodes(beats){ const units=[[4,'R/1'],[3,'R/2.'],[2,'R/2'],[1.5,'R/4.'],[1,'R/4'],[0.75,'R/8.'],[0.5,'R/8'],[0.25,'R/16']]; const out=[]; let left=beats;
+  for(const [u,c] of units){ while(left>=u-1e-6){ out.push(c); left-=u; } } return out; }
+function barToRest(n){
+  const ts=barToks(n); if(!ts.length){ $('hover').textContent='這個小節是空的'; return; }
+  const L=commonBarLen(); const pos=ts[0].t.s;
+  deleteTokens(ts.map(x=>x.i)); reparse();
+  const ta=$('src'); ta.setSelectionRange(pos,pos); lastCaret=pos; caretTouched=true;
+  const v=ta.value; const pad=(pos>0&&!/\s/.test(v[pos-1])?' ':''); const ins=pad+restCodes(L).join(' ')+(/^[ \n]/.test(v.slice(pos))?'':' ');
+  ta.value=v.slice(0,pos)+ins+v.slice(pos); const np=pos+ins.length; ta.setSelectionRange(np,np); lastCaret=np; commit(ta);
+  $('hover').textContent=`第 ${n} 小節已換成休止符（${fmtB(L)} 拍）`;
+}
 function deleteTokens(idxs){
   const ta=$('src'); const T=P.toks;
   const drops=idxs.map(i=>T[i]).filter(t=>t&&t.kind==='note'&&!t.cont).map(t=>({line:t.line,slot:t.slot}));
@@ -2654,7 +2672,7 @@ async function syncImageLyricChoice(){
   const sel=$('scLyr'), wrap=$('scLyrWrap'); if(!(SCAN&&SCAN.pick&&firstChosen())) return;
   const key=SCAN.lyrKey; wrap.hidden=false; sel.innerHTML='<option value="none">找歌詞位置中…</option>';
   // intros and piano-only lines have no words: try the first few chosen lines until one has lyrics
-  const cand=[]; for(let pi=0;pi<SCAN.pages.length&&cand.length<5;pi++) for(let si=0;si<SCAN.pages[pi].systems.length&&cand.length<5;si++){ const ch=SCAN.choice[sysKey(pi,si)]; if(ch) cand.push({pi,si,me:ch.idx}); }
+  const cand=[]; for(let pi=0;pi<SCAN.pages.length&&cand.length<5;pi++) for(let si=0;si<SCAN.pages[pi].systems.length&&cand.length<5;si++){ const ch=SCAN.choice[sysKey(pi,si)]; if(ch&&!ch.rest) cand.push({pi,si,me:ch.idx}); }
   let opts=[];
   for(const f of cand){ opts=await imageLyricOpts(f); if(SCAN.lyrKey!==key) return; if(opts.length) break; }
   sel.innerHTML=''; opts.forEach(x=>{ const o=document.createElement('option'); o.value=x.v; o.textContent=x.t; sel.append(o); });
@@ -2701,6 +2719,8 @@ function applyPick(){
     const key=sysKey(pi,si), c=SCAN.choice[key]; if(c&&c.manual) return;
     const m=sy.staves.length;
     if(m===n) SCAN.choice[key]={idx:k,sure:true};
+    // an intro/interlude line with only the piano (≤2 staves) while you picked a voice above the piano: you rest there
+    else if(m<=2&&n>=3&&k<n-2) SCAN.choice[key]={idx:-1,rest:true,sure:false};
     else { const idx=k>=n/2?Math.max(0,m-(n-k)):Math.min(m-1,k); SCAN.choice[key]={idx,sure:false}; }
   }));
 }
@@ -2713,24 +2733,27 @@ function renderScan(){
     const c=SCAN.choice[sysKey(SCAN.page,si)];
     const top=sy.staves[0].top-sy.staves[0].s*1.5, bot=sy.staves[sy.staves.length-1].bottom+sy.staves[0].s*1.5;
     h+=`<rect class="sysbox${c&&!c.sure?' unsure':''}" x="2" y="${top}" width="${sy.staves[0].s*1.2}" height="${bot-top}" rx="${sy.staves[0].s*0.4}"/>`;
+    if(c&&c.rest){ const s0=sy.staves[0]; h+=`<rect class="sysrest${c.sure?'':' unsure'}" x="${s0.x0}" y="${top}" width="${s0.x1-s0.x0}" height="${bot-top}" rx="${s0.s*0.6}"/><text class="sysrest-t" x="${(s0.x0+s0.x1)/2}" y="${(top+bot)/2+s0.s}" text-anchor="middle" font-size="${s0.s*2.6}">這行我休息${c.sure?'':'（不對的話點你的譜）'}</text>`; }
     sy.staves.forEach((st,k)=>{ const on=c&&c.idx===k;
       h+=`<rect class="st${on?(c.sure?' pick':' guess'):''}" data-si="${si}" data-k="${k}" x="${st.x0}" y="${st.top-st.s*1.2}" width="${st.x1-st.x0}" height="${st.bottom-st.top+st.s*2.4}" rx="${st.s*0.6}"/>`; });
   });
   svg.innerHTML=h;
   $('scPage').textContent=`第 ${SCAN.page+1}／${SCAN.n} 頁`; $('scPrev').disabled=SCAN.page===0; $('scNext').disabled=SCAN.page>=SCAN.n-1;
   const {all,unsure}=scanCounts();
-  $('scInfo').textContent=!SCAN.pick?`共 ${all} 行。先點一下你的聲部那條五線譜。`:unsure?`共 ${all} 行，有 ${unsure} 行聲部數不同，請確認黃色框的選擇是否正確（點一下就算確認）。`:`共 ${all} 行，都已選好。`;
+  $('scInfo').textContent=!SCAN.pick?`共 ${all} 行。先點一下你的聲部那條五線譜。`:(unsure?`共 ${all} 行，有 ${unsure} 行聲部數不同，請確認黃色框的選擇是否正確（點一下就算確認）。`:`共 ${all} 行，都已選好。`)+(SCAN.mode==='lyrics'?'':'只有鋼琴前奏、沒有你聲部的那行：點已選的紅框再點一次，就會變成「這行我休息」。');
   $('scNextUnsure').hidden=!SCAN.pick||!unsure; $('scGo').disabled=!SCAN.pick;
   // clef of the first chosen staff
   if(SCAN.pick&&!SCAN.clefSet){ const f=firstChosen(); if(f){ $('scClef').value=f.st.clef; SCAN.clefSet=true; } }
   if(SCAN.pick){ const f=firstChosen(); const k=f?f.pi+':'+f.si+':'+SCAN.choice[sysKey(f.pi,f.si)].idx:''; if(k!==SCAN.lyrKey){ SCAN.lyrKey=k; syncLyricChoice(); } }
 }
-function firstChosen(){ for(let pi=0;pi<SCAN.pages.length;pi++) for(let si=0;si<SCAN.pages[pi].systems.length;si++){ const c=SCAN.choice[sysKey(pi,si)]; if(c) return {pi,si,st:SCAN.pages[pi].systems[si].staves[c.idx]}; } return null; }
+function firstChosen(){ for(let pi=0;pi<SCAN.pages.length;pi++) for(let si=0;si<SCAN.pages[pi].systems.length;si++){ const c=SCAN.choice[sysKey(pi,si)]; if(c&&!c.rest) return {pi,si,st:SCAN.pages[pi].systems[si].staves[c.idx]}; } return null; }
 $('scanSvg').addEventListener('click',e=>{
   const r=e.target.closest('rect.st'); if(!r) return;
   const si=+r.dataset.si, k=+r.dataset.k, n=SCAN.pages[SCAN.page].systems[si].staves.length;
-  if(!SCAN.pick){ SCAN.pick={k,n}; SCAN.choice[sysKey(SCAN.page,si)]={idx:k,sure:true,manual:true}; applyPick(); SCAN.clefSet=false; }
-  else SCAN.choice[sysKey(SCAN.page,si)]={idx:k,sure:true,manual:true};
+  const key=sysKey(SCAN.page,si), cur=SCAN.choice[key];
+  if(!SCAN.pick){ SCAN.pick={k,n}; SCAN.choice[key]={idx:k,sure:true,manual:true}; applyPick(); SCAN.clefSet=false; }
+  else if(cur&&cur.idx===k&&cur.sure&&SCAN.mode!=='lyrics') SCAN.choice[key]={idx:-1,rest:true,sure:true,manual:true}; // tapped the chosen one again: no part of mine on this line
+  else SCAN.choice[key]={idx:k,sure:true,manual:true};
   renderScan();
 });
 $('scPrev').onclick=()=>{ if(SCAN.page>0){ SCAN.page--; renderScan(); } };
@@ -3054,6 +3077,7 @@ async function collectLyricSystems(sg,lyCh,image){
     impStatus(`讀取歌詞：第 ${pi+1}／${SCAN.n} 頁…`);
     const c=await renderPage(pi,pg.scale); const ctx=c.getContext('2d',{willReadFrequently:true}); const b=toBinary(ctx,c.width,c.height);
     for(let si=0;si<pg.systems.length;si++){ const sy=pg.systems[si], ch=SCAN.choice[sysKey(pi,si)]; if(!ch) continue;
+      if(ch.rest){ bar+=lineMeasures(b,c.width,c.height,sy.staves[0],sg.key).length; continue; }
       const st=sy.staves[ch.idx], S=st.s; const A=analyzeStaff(b,c.width,c.height,st,sg.key);
       const cuts=A.barX.filter(x=>x>A.startX-0.5*S); const heads=A.heads.slice().sort((a,b)=>a.cx-b.cx);
       const segs=[]; let lastX=A.startX-S; [...cuts,1e9].forEach(cx=>{ const hs=heads.filter(h=>h.cx>lastX&&h.cx<cx); const rs=A.rests.filter(r=>r.cx>lastX&&r.cx<cx); if(cx<1e9||hs.length||rs.length) segs.push({x0:lastX,x1:Math.min(cx,st.x1),hs,n:hs.length+rs.length}); lastX=cx; });
@@ -3180,7 +3204,7 @@ $('scGo').onclick=async()=>{
   if(SCAN.mode==='lyrics') return fillLyricsFromScan();
   const clef=$('scClef').value, chordPick=$('scChord').value; let bar=Math.round(+$('scStart').value||0);
   const lyCh=$('scLyrWrap').hidden?'none':$('scLyr').value;
-  const startBar=bar; const lines=[]; const strips=[]; let nNotes=0, nSyl=0; const allBars=[];
+  const startBar=bar; const lines=[]; const strips=[]; let nNotes=0, nSyl=0, restBars=0; const allBars=[];
   $('scGo').disabled=true;
   { const k=+$('scKey').value; stopAll(); const ns=newSong({title:$('scName').value.trim()||(SCAN.name||'').replace(/\.[^.]+$/,'')||'新曲子',clef,key:k,startBar,text:''}); lib.songs.push(ns); lib.current=ns.id; saveLib(true); loadSong(); syncKeySel(); }
   try{
@@ -3190,6 +3214,7 @@ $('scGo').onclick=async()=>{
       const c=await renderPage(pi,pg.scale); const ctx=c.getContext('2d',{willReadFrequently:true}); const b=toBinary(ctx,c.width,c.height);
       for(let si=0;si<pg.systems.length;si++){
         const sy=pg.systems[si], ch=SCAN.choice[sysKey(pi,si)]; if(!ch) continue;
+        if(ch.rest){ const ms=lineMeasures(b,c.width,c.height,sy.staves[0],song().key); if(ms.length){ lines.push({restAt:bar,count:ms.length}); restBars+=ms.length; } bar+=ms.length; continue; }
         const st=sy.staves[ch.idx], prev=sy.staves[ch.idx-1], next=sy.staves[ch.idx+1], S=st.s;
         const A=analyzeStaff(b,c.width,c.height,st,song().key);
         // measures from barlines
@@ -3246,6 +3271,9 @@ $('scGo').onclick=async()=>{
     const cnt={}; allBars.forEach(r=>{ const L=+r.beats.toFixed(3); cnt[L]=(cnt[L]||0)+1; });
     const common=+(Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0]||[4])[0];
     allBars.forEach(r=>{ if(Math.abs(r.beats-common)>1e-3) r.warn.push('beats'); });
+    // lines you don't sing: a full bar of rest each, as long as a normal bar
+    const restBar=restCodes(common).map(c=>c.replace(/^R\/(\d+)(\.?)$/,(_,d,dot)=>'0'+DEN_LETTER[+d]+dot)).join(' ');
+    for(let i=0;i<lines.length;i++) if(typeof lines[i]==='object') lines[i]=`${lines[i].restAt}: `+Array(lines[i].count).fill(restBar).join(' | ');
     await saveStrips(song().id,strips);
     if(clef!==song().clef){ song().clef=clef; saveLib(true); syncQE(); drawStaff(); }
     if(!P.toks.length&&+song().startBar!==startBar){ song().startBar=startBar; $('songStart').value=startBar; saveLib(true); reparse(); }
@@ -3253,12 +3281,18 @@ $('scGo').onclick=async()=>{
     $('codeIn').value=lines.join('\n'); renderCodePreview(); applyCode();
     closeScan(); await showStrips();
     const sus=allBars.filter(r=>r.warn.length).length;
-    impStatus(`完成：${strips.length} 行、${bar-startBar} 小節、找到 ${nNotes} 個音`+(nSyl?`、${nSyl} 個歌詞音節`:'')+`，已經寫進這首曲子。其中 ${sus} 個小節標成可疑，按「逐小節校對」對照原譜修正。`);
+    impStatus(`完成：${strips.length} 行、${bar-startBar} 小節、找到 ${nNotes} 個音`+(nSyl?`、${nSyl} 個歌詞音節`:'')+(restBars?`（${restBars} 個小節是你休息的前奏或間奏，已填休止符）`:'')+`，已經寫進這首曲子。其中 ${sus} 個小節標成可疑，按「逐小節校對」對照原譜修正。`);
     $('stripPanel').scrollIntoView({block:'start',behavior:'smooth'});
   }catch(err){ impStatus('辨識失敗：'+(err.message||err)); console.error(err); }
   finally{ const g=$('scGo'); if(g) g.disabled=false; }
 };
 
+function lineMeasures(b,w,h,st,keyN){
+  const A=analyzeStaff(b,w,h,st,keyN), S=st.s; const cuts=A.barX.filter(x=>x>A.startX-0.5*S);
+  const evs=[...A.heads.map(hd=>hd.cx),...A.rests.map(r=>r.cx)];
+  const segs=[]; let lastX=A.startX-S; [...cuts,1e9].forEach(cx=>{ const n=evs.filter(x=>x>lastX&&x<cx).length; if(cx<1e9||n) segs.push({x0:lastX,x1:Math.min(cx,st.x1),n}); lastX=cx; });
+  return segs.filter((sg,k)=>sg.n||k<segs.length-1);
+}
 /* ---- reference strips (stored per song on this device) ---- */
 const ScanDB={db:null,
   open(){ if(this.db) return Promise.resolve(this.db);
@@ -3445,6 +3479,7 @@ function revKey(k,shift){
   else if(k==='#') act('acc:#'); else if(k==='b') act('acc:b'); else if(k==='n') act('acc:n');
   else if(k==='0') act('rest');
   else if(k==='Delete'||k==='Backspace'){ if(sel){ deleteTokens([sel.i]); revSelect(REV.sel); } }
+  else if(k==='barrest'){ const n=sel?sel.t.bar:REV.n; barToRest(n); const all=revToks(); const at=all.findIndex(y=>y.t.bar===n); revSelect(at<0?0:at); revInfo(); }
   else done=false;
   return done;
 }
